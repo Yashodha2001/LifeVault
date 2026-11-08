@@ -14,37 +14,47 @@ import {
   addReminder,
   deleteReminder,
   getReminders,
+  Reminder,
   toggleReminderCompleted,
   updateReminder,
 } from "../database/database";
 
-import type { Reminder } from "../database/database";
+import {
+  cancelReminderNotification,
+  scheduleReminderNotification,
+} from "../utils/notifications";
 
+// REMINDER MANAGER SCREEN
 export default function ReminderScreen() {
-  // Store reminder information
-  const [reminders, setReminders] = useState<Reminder[]>([]);
-
-  // Form input states
+  // Form states
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("Personal");
   const [reminderDateTime, setReminderDateTime] = useState("");
 
-  // Store the ID of the reminder being edited
+  // Reminder list state
+  const [reminders, setReminders] = useState<Reminder[]>([]);
+
+  // Editing state
   const [editingId, setEditingId] = useState<number | null>(null);
 
-  // Load reminders when the screen opens
+  // Load reminders when screen opens
   useEffect(() => {
     loadReminders();
   }, []);
 
-  // READ reminders from SQLite
+  // LOAD REMINDERS FROM SQLITE
   function loadReminders() {
-    const data = getReminders();
-    setReminders(data);
+    try {
+      const data = getReminders();
+      setReminders(data);
+    } catch (error) {
+      console.error("Loading reminders error:", error);
+      Alert.alert("Error", "Could not load reminders.");
+    }
   }
 
-  // Clear the form
+  // CLEAR FORM
   function clearForm() {
     setTitle("");
     setDescription("");
@@ -53,13 +63,15 @@ export default function ReminderScreen() {
     setEditingId(null);
   }
 
-  // ADD or UPDATE reminder
-  function handleSaveReminder() {
+  // SAVE REMINDER
+  async function handleSaveReminder() {
+    // Check title
     if (!title.trim()) {
       Alert.alert("Required", "Please enter a reminder title.");
       return;
     }
 
+    // Check date and time
     if (!reminderDateTime.trim()) {
       Alert.alert("Required", "Please enter a reminder date and time.");
       return;
@@ -69,71 +81,140 @@ export default function ReminderScreen() {
     const dateTimePattern = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/;
 
     if (!dateTimePattern.test(reminderDateTime.trim())) {
-      Alert.alert("Invalid date and time", "Use this format: 2026-11-08 09:30");
+      Alert.alert("Invalid date", "Use this format: 2026-11-08 09:30");
       return;
     }
 
-    // Check whether the entered date and time are valid
-    const parsedDate = new Date(reminderDateTime.replace(" ", "T"));
+    // Separate date and time
+    const [datePart, timePart] = reminderDateTime.trim().split(" ");
 
+    const [year, month, day] = datePart.split("-").map(Number);
+
+    const [hour, minute] = timePart.split(":").map(Number);
+
+    const selectedDate = new Date(year, month - 1, day, hour, minute);
+
+    // Validate actual date and time
     if (
-      Number.isNaN(parsedDate.getTime()) ||
-      parsedDate.getFullYear() !== Number(reminderDateTime.substring(0, 4)) ||
-      parsedDate.getMonth() + 1 !== Number(reminderDateTime.substring(5, 7)) ||
-      parsedDate.getDate() !== Number(reminderDateTime.substring(8, 10)) ||
-      parsedDate.getHours() !== Number(reminderDateTime.substring(11, 13)) ||
-      parsedDate.getMinutes() !== Number(reminderDateTime.substring(14, 16))
+      selectedDate.getFullYear() !== year ||
+      selectedDate.getMonth() !== month - 1 ||
+      selectedDate.getDate() !== day ||
+      selectedDate.getHours() !== hour ||
+      selectedDate.getMinutes() !== minute
     ) {
-      Alert.alert("Invalid date", "Please enter a real date and time.");
+      Alert.alert("Invalid date", "Please enter a valid date and time.");
       return;
     }
 
-    if (editingId !== null) {
-      // UPDATE existing reminder
-      updateReminder(
-        editingId,
-        title.trim(),
-        description.trim(),
-        category,
-        reminderDateTime.trim(),
-      );
-
-      Alert.alert("Success", "Reminder updated successfully!");
-    } else {
-      // CREATE new reminder
-      addReminder(
-        title.trim(),
-        description.trim(),
-        category,
-        reminderDateTime.trim(),
-      );
-
-      Alert.alert("Success", "Reminder added successfully!");
+    // Check future date
+    if (selectedDate.getTime() <= Date.now()) {
+      Alert.alert("Past date", "Please select a future date and time.");
+      return;
     }
 
-    clearForm();
-    loadReminders();
+    try {
+      // Schedule new phone notification
+      const newNotificationId = await scheduleReminderNotification(
+        title.trim(),
+        description.trim(),
+        reminderDateTime.trim(),
+      );
+
+      // UPDATE EXISTING REMINDER
+      if (editingId !== null) {
+        const oldReminder = reminders.find((item) => item.id === editingId);
+
+        // Cancel old notification
+        await cancelReminderNotification(oldReminder?.notificationId ?? null);
+
+        // Update reminder in database
+        updateReminder(
+          editingId,
+          title.trim(),
+          description.trim(),
+          category,
+          reminderDateTime.trim(),
+          newNotificationId,
+        );
+      }
+
+      // ADD NEW REMINDER
+      else {
+        addReminder(
+          title.trim(),
+          description.trim(),
+          category,
+          reminderDateTime.trim(),
+          newNotificationId,
+        );
+      }
+
+      // Clear and reload
+      clearForm();
+      loadReminders();
+
+      if (newNotificationId) {
+        Alert.alert(
+          "Success",
+          "Reminder saved and phone notification scheduled!",
+        );
+      } else {
+        Alert.alert(
+          "Reminder saved",
+          "Notification permission was not granted, so no phone notification was scheduled.",
+        );
+      }
+    } catch (error) {
+      console.error("Reminder save error:", error);
+
+      Alert.alert("Error", "Could not save or schedule the reminder.");
+    }
   }
 
-  // EDIT reminder
+  // EDIT REMINDER
   function handleEditReminder(reminder: Reminder) {
-    setEditingId(reminder.id);
     setTitle(reminder.title);
     setDescription(reminder.description);
-    setCategory(reminder.category || "Personal");
+    setCategory(reminder.category);
     setReminderDateTime(reminder.reminderDateTime);
+    setEditingId(reminder.id);
   }
 
-  // MARK reminder as completed or pending
-  function handleToggleCompleted(reminder: Reminder) {
+  // COMPLETE OR UNDO REMINDER
+  async function handleToggleCompleted(reminder: Reminder) {
     const newStatus = reminder.isCompleted === 1 ? 0 : 1;
 
-    toggleReminderCompleted(reminder.id, newStatus);
+    try {
+      let newNotificationId = reminder.notificationId;
 
-    loadReminders();
+      // If completed, cancel notification
+      if (newStatus === 1) {
+        await cancelReminderNotification(reminder.notificationId);
+
+        newNotificationId = null;
+      }
+
+      // If undone, schedule notification again
+      else {
+        newNotificationId = await scheduleReminderNotification(
+          reminder.title,
+          reminder.description,
+          reminder.reminderDateTime,
+        );
+      }
+
+      // Update database
+      toggleReminderCompleted(reminder.id, newStatus, newNotificationId);
+
+      loadReminders();
+    } catch (error) {
+      console.error("Completion update error:", error);
+
+      Alert.alert("Error", "Could not update reminder status.");
+    }
   }
 
-  // DELETE reminder
+  // DELETE REMINDER
   function handleDeleteReminder(id: number) {
     Alert.alert(
       "Delete Reminder",
@@ -146,13 +227,28 @@ export default function ReminderScreen() {
         {
           text: "Delete",
           style: "destructive",
-          onPress: () => {
-            deleteReminder(id);
 
-            loadReminders();
+          onPress: async () => {
+            try {
+              const reminder = reminders.find((item) => item.id === id);
 
-            if (editingId === id) {
-              clearForm();
+              // Cancel scheduled notification
+              await cancelReminderNotification(
+                reminder?.notificationId ?? null,
+              );
+
+              // Delete from database
+              deleteReminder(id);
+
+              loadReminders();
+
+              if (editingId === id) {
+                clearForm();
+              }
+            } catch (error) {
+              console.error("Delete reminder error:", error);
+
+              Alert.alert("Error", "Could not delete reminder.");
             }
           },
         },
@@ -160,47 +256,78 @@ export default function ReminderScreen() {
     );
   }
 
-  // Separate pending and completed reminders
+  // SEPARATE PENDING AND COMPLETED REMINDERS
   const pendingReminders = reminders.filter((item) => item.isCompleted === 0);
 
   const completedReminders = reminders.filter((item) => item.isCompleted === 1);
 
-  // Display each reminder
-  function renderReminder(reminder: Reminder) {
+  // CATEGORY BUTTON
+  function CategoryButton({ value }: { value: string }) {
     return (
-      <View style={styles.reminderCard} key={reminder.id}>
-        <Text style={styles.reminderTitle}>{reminder.title}</Text>
-
-        <Text style={styles.description}>
-          {reminder.description || "No description"}
+      <TouchableOpacity
+        style={[
+          styles.categoryButton,
+          category === value && styles.selectedCategory,
+        ]}
+        onPress={() => setCategory(value)}
+      >
+        <Text
+          style={[
+            styles.categoryText,
+            category === value && styles.selectedCategoryText,
+          ]}
+        >
+          {value}
         </Text>
+      </TouchableOpacity>
+    );
+  }
 
-        <Text style={styles.detail}>Category: {reminder.category}</Text>
+  // REMINDER CARD
+  function ReminderCard({ reminder }: { reminder: Reminder }) {
+    const isCompleted = reminder.isCompleted === 1;
 
-        <Text style={styles.detail}>
-          Date & Time: {reminder.reminderDateTime}
-        </Text>
+    return (
+      <View style={styles.reminderCard}>
+        <View style={styles.reminderHeader}>
+          <View style={styles.reminderInfo}>
+            <Text
+              style={[
+                styles.reminderTitle,
+                isCompleted && styles.completedText,
+              ]}
+            >
+              {reminder.title}
+            </Text>
 
-        <Text style={styles.status}>
-          {reminder.isCompleted === 1 ? "Completed" : "Pending"}
-        </Text>
+            <Text style={styles.categoryLabel}>{reminder.category}</Text>
+          </View>
+        </View>
 
-        <View style={styles.actionContainer}>
+        {reminder.description ? (
+          <Text style={styles.reminderDescription}>{reminder.description}</Text>
+        ) : null}
+
+        <Text style={styles.dateText}>Date: {reminder.reminderDateTime}</Text>
+
+        <View style={styles.actionRow}>
           <TouchableOpacity
             style={styles.completeButton}
             onPress={() => handleToggleCompleted(reminder)}
           >
             <Text style={styles.buttonText}>
-              {reminder.isCompleted === 1 ? "Undo" : "Complete"}
+              {isCompleted ? "Undo" : "Complete"}
             </Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.editButton}
-            onPress={() => handleEditReminder(reminder)}
-          >
-            <Text style={styles.buttonText}>Edit</Text>
-          </TouchableOpacity>
+          {!isCompleted && (
+            <TouchableOpacity
+              style={styles.editButton}
+              onPress={() => handleEditReminder(reminder)}
+            >
+              <Text style={styles.buttonText}>Edit</Text>
+            </TouchableOpacity>
+          )}
 
           <TouchableOpacity
             style={styles.deleteButton}
@@ -213,22 +340,24 @@ export default function ReminderScreen() {
     );
   }
 
+  // MAIN SCREEN
   return (
     <ScrollView
       style={styles.container}
-      contentContainerStyle={styles.content}
-      keyboardShouldPersistTaps="handled"
+      contentContainerStyle={styles.contentContainer}
     >
-      <Text style={styles.title}>Reminder Manager</Text>
+      <Text style={styles.heading}>Reminder Manager</Text>
 
       <Text style={styles.subtitle}>Manage your daily activities.</Text>
 
-      {/* REMINDER FORM */}
+      {/* ADD / EDIT REMINDER FORM */}
+
       <View style={styles.formCard}>
-        <Text style={styles.formTitle}>
-          {editingId !== null ? "Edit Reminder" : "Create Reminder"}
+        <Text style={styles.sectionTitle}>
+          {editingId !== null ? "Edit Reminder" : "Add New Reminder"}
         </Text>
 
+        {/* Title */}
         <Text style={styles.label}>Reminder Title</Text>
 
         <TextInput
@@ -238,6 +367,7 @@ export default function ReminderScreen() {
           onChangeText={setTitle}
         />
 
+        {/* Description */}
         <Text style={styles.label}>Description</Text>
 
         <TextInput
@@ -248,31 +378,17 @@ export default function ReminderScreen() {
           multiline
         />
 
+        {/* Category */}
         <Text style={styles.label}>Category</Text>
 
-        <View style={styles.categoryContainer}>
-          {["Personal", "Study", "Work"].map((item) => (
-            <TouchableOpacity
-              key={item}
-              style={[
-                styles.categoryButton,
-                category === item && styles.selectedCategory,
-              ]}
-              onPress={() => setCategory(item)}
-            >
-              <Text
-                style={[
-                  styles.categoryText,
-                  category === item && styles.selectedCategoryText,
-                ]}
-              >
-                {item}
-              </Text>
-            </TouchableOpacity>
-          ))}
+        <View style={styles.categoryRow}>
+          <CategoryButton value="Personal" />
+          <CategoryButton value="Study" />
+          <CategoryButton value="Work" />
         </View>
 
-        <Text style={styles.label}>Date and Time</Text>
+        {/* Date and Time */}
+        <Text style={styles.label}>Reminder Date and Time</Text>
 
         <TextInput
           style={styles.input}
@@ -282,19 +398,19 @@ export default function ReminderScreen() {
           autoCapitalize="none"
         />
 
-        <Text style={styles.helperText}>
-          Format: YYYY-MM-DD HH:mm (24-hour time)
-        </Text>
+        <Text style={styles.hint}>Format: YYYY-MM-DD HH:mm (24-hour time)</Text>
 
+        {/* Save Button */}
         <TouchableOpacity
           style={styles.saveButton}
           onPress={handleSaveReminder}
         >
           <Text style={styles.saveButtonText}>
-            {editingId !== null ? "Update Reminder" : "Add Reminder"}
+            {editingId !== null ? "Update Reminder" : "Save Reminder"}
           </Text>
         </TouchableOpacity>
 
+        {/* Cancel Edit */}
         {editingId !== null && (
           <TouchableOpacity style={styles.cancelButton} onPress={clearForm}>
             <Text style={styles.cancelButtonText}>Cancel Editing</Text>
@@ -302,83 +418,103 @@ export default function ReminderScreen() {
         )}
       </View>
 
-      {/* PENDING REMINDERS */}
-      <Text style={styles.sectionTitle}>⏰ Upcoming / Pending Reminders</Text>
+      {/* DAILY REMINDERS */}
+
+      <View style={styles.summaryCard}>
+        <Text style={styles.summaryTitle}>Daily Reminders</Text>
+
+        <Text style={styles.summaryNumber}>{pendingReminders.length}</Text>
+
+        <Text style={styles.summaryDescription}>Pending reminders</Text>
+      </View>
+
+      {/* UPCOMING / PENDING REMINDERS */}
+
+      <Text style={styles.sectionTitle}>Upcoming Reminders</Text>
 
       {pendingReminders.length === 0 ? (
-        <Text style={styles.emptyText}>No pending reminders yet.</Text>
+        <Text style={styles.emptyText}>No upcoming reminders.</Text>
       ) : (
-        pendingReminders.map(renderReminder)
+        pendingReminders.map((reminder) => (
+          <ReminderCard key={reminder.id} reminder={reminder} />
+        ))
       )}
 
       {/* COMPLETED REMINDERS */}
-      <Text style={styles.sectionTitle}>✅ Completed Reminders</Text>
 
-      {completedReminders.length === 0 ? (
-        <Text style={styles.emptyText}>No completed reminders yet.</Text>
-      ) : (
-        completedReminders.map(renderReminder)
-      )}
+      <View style={styles.completedSection}>
+        <Text style={styles.sectionTitle}>Completed Reminders</Text>
+
+        {completedReminders.length === 0 ? (
+          <Text style={styles.emptyText}>No completed reminders.</Text>
+        ) : (
+          completedReminders.map((reminder) => (
+            <ReminderCard key={reminder.id} reminder={reminder} />
+          ))
+        )}
+      </View>
     </ScrollView>
   );
 }
 
-// ======================================
-// STYLES
-// ======================================
+// ==================================================
+//                       STYLES
+// ==================================================
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "#F5F6FA",
   },
 
-  content: {
+  contentContainer: {
     padding: 20,
-    paddingTop: 60,
     paddingBottom: 40,
   },
 
-  title: {
-    fontSize: 25,
+  heading: {
+    fontSize: 26,
     fontWeight: "bold",
-    color: "#6C63FF",
+    color: "#20243A",
+    marginTop: 20,
   },
 
   subtitle: {
+    fontSize: 14,
     color: "#777777",
-    marginTop: 10,
-    marginBottom: 25,
+    marginTop: 5,
+    marginBottom: 20,
   },
 
   formCard: {
-    backgroundColor: "#F0EFFF",
+    backgroundColor: "#FFFFFF",
     padding: 18,
-    borderRadius: 15,
-    marginBottom: 25,
+    borderRadius: 14,
+    marginBottom: 20,
   },
 
-  formTitle: {
-    fontSize: 20,
+  sectionTitle: {
+    fontSize: 19,
     fontWeight: "bold",
-    color: "#6C63FF",
-    marginBottom: 15,
+    color: "#20243A",
+    marginBottom: 14,
   },
 
   label: {
-    fontWeight: "bold",
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#333333",
     marginBottom: 7,
     marginTop: 10,
-    color: "#333333",
   },
 
   input: {
-    backgroundColor: "#FFFFFF",
     borderWidth: 1,
     borderColor: "#DDDDDD",
-    borderRadius: 10,
+    borderRadius: 9,
     padding: 12,
-    fontSize: 15,
+    fontSize: 14,
+    backgroundColor: "#FFFFFF",
   },
 
   descriptionInput: {
@@ -386,44 +522,46 @@ const styles = StyleSheet.create({
     textAlignVertical: "top",
   },
 
-  helperText: {
-    color: "#777777",
-    fontSize: 12,
-    marginTop: 6,
-  },
-
-  categoryContainer: {
+  categoryRow: {
     flexDirection: "row",
     gap: 8,
-    marginTop: 3,
+    marginBottom: 5,
   },
 
   categoryButton: {
-    backgroundColor: "#FFFFFF",
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: "#6C63FF",
-    paddingVertical: 9,
-    paddingHorizontal: 15,
-    borderRadius: 20,
+    borderColor: "#CCCCCC",
+    alignItems: "center",
   },
 
   selectedCategory: {
-    backgroundColor: "#6C63FF",
+    backgroundColor: "#5146D8",
+    borderColor: "#5146D8",
   },
 
   categoryText: {
-    color: "#6C63FF",
-    fontWeight: "600",
+    fontSize: 12,
+    color: "#333333",
   },
 
   selectedCategoryText: {
     color: "#FFFFFF",
+    fontWeight: "bold",
+  },
+
+  hint: {
+    fontSize: 11,
+    color: "#888888",
+    marginTop: 6,
   },
 
   saveButton: {
-    backgroundColor: "#6C63FF",
+    backgroundColor: "#5146D8",
     padding: 14,
-    borderRadius: 10,
+    borderRadius: 9,
     alignItems: "center",
     marginTop: 20,
   },
@@ -431,7 +569,7 @@ const styles = StyleSheet.create({
   saveButtonText: {
     color: "#FFFFFF",
     fontWeight: "bold",
-    fontSize: 16,
+    fontSize: 15,
   },
 
   cancelButton: {
@@ -441,86 +579,125 @@ const styles = StyleSheet.create({
   },
 
   cancelButtonText: {
-    color: "#6C63FF",
-    fontWeight: "bold",
+    color: "#5146D8",
+    fontWeight: "600",
   },
 
-  sectionTitle: {
-    fontSize: 19,
-    fontWeight: "bold",
-    color: "#6C63FF",
-    marginBottom: 15,
-    marginTop: 10,
+  summaryCard: {
+    backgroundColor: "#E9E8FF",
+    padding: 18,
+    borderRadius: 14,
+    marginBottom: 25,
   },
 
-  reminderCard: {
-    backgroundColor: "#F0EFFF",
-    padding: 17,
-    borderRadius: 13,
-    marginBottom: 15,
-  },
-
-  reminderTitle: {
-    fontSize: 18,
+  summaryTitle: {
+    fontSize: 16,
     fontWeight: "bold",
     color: "#333333",
   },
 
-  description: {
-    color: "#666666",
+  summaryNumber: {
+    fontSize: 30,
+    fontWeight: "bold",
+    color: "#5146D8",
     marginTop: 8,
   },
 
-  detail: {
-    color: "#555555",
-    marginTop: 8,
+  summaryDescription: {
+    color: "#666666",
     fontSize: 13,
   },
 
-  status: {
-    color: "#6C63FF",
+  reminderCard: {
+    backgroundColor: "#FFFFFF",
+    padding: 15,
+    borderRadius: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#EEEEEE",
+  },
+
+  reminderHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+
+  reminderInfo: {
+    flex: 1,
+  },
+
+  reminderTitle: {
+    fontSize: 16,
     fontWeight: "bold",
+    color: "#222222",
+  },
+
+  completedText: {
+    textDecorationLine: "line-through",
+    color: "#888888",
+  },
+
+  categoryLabel: {
+    fontSize: 12,
+    color: "#5146D8",
+    marginTop: 4,
+  },
+
+  reminderDescription: {
+    fontSize: 13,
+    color: "#666666",
     marginTop: 10,
   },
 
-  actionContainer: {
+  dateText: {
+    fontSize: 12,
+    color: "#888888",
+    marginTop: 10,
+  },
+
+  actionRow: {
     flexDirection: "row",
     gap: 8,
-    marginTop: 15,
+    marginTop: 14,
   },
 
   completeButton: {
-    backgroundColor: "#28A745",
-    padding: 10,
-    borderRadius: 8,
     flex: 1,
+    backgroundColor: "#269B65",
+    padding: 10,
+    borderRadius: 7,
     alignItems: "center",
   },
 
   editButton: {
-    backgroundColor: "#6C63FF",
-    padding: 10,
-    borderRadius: 8,
     flex: 1,
+    backgroundColor: "#5146D8",
+    padding: 10,
+    borderRadius: 7,
     alignItems: "center",
   },
 
   deleteButton: {
-    backgroundColor: "#DC3545",
-    padding: 10,
-    borderRadius: 8,
     flex: 1,
+    backgroundColor: "#D94343",
+    padding: 10,
+    borderRadius: 7,
     alignItems: "center",
   },
 
   buttonText: {
     color: "#FFFFFF",
-    fontWeight: "bold",
     fontSize: 12,
+    fontWeight: "bold",
   },
 
   emptyText: {
     color: "#888888",
+    fontSize: 14,
     marginBottom: 20,
+  },
+
+  completedSection: {
+    marginTop: 20,
   },
 });

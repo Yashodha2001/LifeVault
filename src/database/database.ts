@@ -1,11 +1,9 @@
 import * as SQLite from "expo-sqlite";
 
-// Open or create the LifeVault database
 export const db = SQLite.openDatabaseSync("lifevault.db");
 
-// ===============================
-// NOTE DATA TYPE
-// ===============================
+// -------------------- NOTE TYPE --------------------
+
 export type Note = {
   id: number;
   title: string;
@@ -15,9 +13,8 @@ export type Note = {
   createdAt: string;
 };
 
-// ===============================
-// REMINDER DATA TYPE
-// ===============================
+// -------------------- REMINDER TYPE --------------------
+
 export type Reminder = {
   id: number;
   title: string;
@@ -25,12 +22,12 @@ export type Reminder = {
   category: string;
   reminderDateTime: string;
   isCompleted: number;
+  notificationId: string | null;
   createdAt: string;
 };
 
-// ===============================
-// INITIALIZE DATABASE
-// ===============================
+// -------------------- INITIALIZE DATABASE --------------------
+
 export function initializeDatabase() {
   console.log("Starting database initialization...");
 
@@ -46,14 +43,16 @@ export function initializeDatabase() {
     );
   `);
 
-  // Check whether isFavorite column exists
-  const columns = db.getAllSync<{ name: string }>("PRAGMA table_info(notes)");
+  // Check whether the notes table has the favourite column
+  const noteColumns = db.getAllSync<{ name: string }>(
+    "PRAGMA table_info(notes)",
+  );
 
-  const hasFavoriteColumn = columns.some(
+  const hasFavoriteColumn = noteColumns.some(
     (column) => column.name === "isFavorite",
   );
 
-  // Add isFavorite column if missing
+  // Add favourite column if it does not exist
   if (!hasFavoriteColumn) {
     db.execSync("ALTER TABLE notes ADD COLUMN isFavorite INTEGER DEFAULT 0");
   }
@@ -67,16 +66,31 @@ export function initializeDatabase() {
       category TEXT,
       reminderDateTime TEXT NOT NULL,
       isCompleted INTEGER DEFAULT 0,
+      notificationId TEXT,
       createdAt TEXT DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
+  // Check whether notificationId column exists
+  const reminderColumns = db.getAllSync<{ name: string }>(
+    "PRAGMA table_info(reminders)",
+  );
+
+  const hasNotificationId = reminderColumns.some(
+    (column) => column.name === "notificationId",
+  );
+
+  // Add notificationId to an existing reminders table if needed
+  if (!hasNotificationId) {
+    db.execSync("ALTER TABLE reminders ADD COLUMN notificationId TEXT");
+  }
+
   console.log("LifeVault database initialized successfully!");
 }
 
-// ======================================
-// NOTES DATABASE FUNCTIONS
-// ======================================
+// ==================================================
+//                    NOTES CRUD
+// ==================================================
 
 // CREATE NOTE
 export function addNote(title: string, content: string, category: string) {
@@ -101,7 +115,7 @@ export function updateNote(
   content: string,
   category: string,
 ) {
-  const result = db.runSync(
+  return db.runSync(
     `UPDATE notes
      SET title = ?, content = ?, category = ?
      WHERE id = ?`,
@@ -110,23 +124,15 @@ export function updateNote(
     category,
     id,
   );
-
-  console.log("Update result:", result);
-  return result;
 }
 
-// FAVOURITE NOTE
+// TOGGLE NOTE FAVOURITE
 export function toggleFavorite(id: number, isFavorite: number) {
-  const result = db.runSync(
-    `UPDATE notes
-     SET isFavorite = ?
-     WHERE id = ?`,
+  return db.runSync(
+    "UPDATE notes SET isFavorite = ? WHERE id = ?",
     isFavorite,
     id,
   );
-
-  console.log("Favourite result:", result);
-  return result;
 }
 
 // DELETE NOTE
@@ -134,9 +140,9 @@ export function deleteNote(id: number) {
   return db.runSync("DELETE FROM notes WHERE id = ?", id);
 }
 
-// ======================================
-// REMINDER DATABASE FUNCTIONS
-// ======================================
+// ==================================================
+//                  REMINDERS CRUD
+// ==================================================
 
 // CREATE REMINDER
 export function addReminder(
@@ -144,15 +150,17 @@ export function addReminder(
   description: string,
   category: string,
   reminderDateTime: string,
+  notificationId: string | null,
 ) {
   return db.runSync(
     `INSERT INTO reminders
-     (title, description, category, reminderDateTime)
-     VALUES (?, ?, ?, ?)`,
+     (title, description, category, reminderDateTime, notificationId)
+     VALUES (?, ?, ?, ?, ?)`,
     title,
     description,
     category,
     reminderDateTime,
+    notificationId,
   );
 }
 
@@ -171,29 +179,37 @@ export function updateReminder(
   description: string,
   category: string,
   reminderDateTime: string,
+  notificationId: string | null,
 ) {
   return db.runSync(
     `UPDATE reminders
      SET title = ?,
          description = ?,
          category = ?,
-         reminderDateTime = ?
+         reminderDateTime = ?,
+         notificationId = ?
      WHERE id = ?`,
     title,
     description,
     category,
     reminderDateTime,
+    notificationId,
     id,
   );
 }
 
-// MARK REMINDER AS COMPLETED OR PENDING
-export function toggleReminderCompleted(id: number, isCompleted: number) {
+// COMPLETE OR UNDO REMINDER
+export function toggleReminderCompleted(
+  id: number,
+  isCompleted: number,
+  notificationId: string | null,
+) {
   return db.runSync(
     `UPDATE reminders
-     SET isCompleted = ?
+     SET isCompleted = ?, notificationId = ?
      WHERE id = ?`,
     isCompleted,
+    notificationId,
     id,
   );
 }
