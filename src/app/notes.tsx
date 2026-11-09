@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   Alert,
@@ -20,22 +20,25 @@ import {
 
 import type { Note } from "../database/database";
 
+type CategoryFilter = "All" | "Personal" | "Study" | "Memory";
+type SortOrder = "Newest" | "Oldest";
+
 export default function NotesScreen() {
-  // Store notes retrieved from SQLite
   const [notes, setNotes] = useState<Note[]>([]);
 
-  // Store user input
+  // Note form
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
-
-  // Store selected category
   const [category, setCategory] = useState("Personal");
-
-  // Store the ID of the note being edited
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
 
+  // Search and filter states
+  const [searchText, setSearchText] = useState("");
+  const [selectedFilter, setSelectedFilter] = useState<CategoryFilter>("All");
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  const [sortOrder, setSortOrder] = useState<SortOrder>("Newest");
+
   // Load notes when the screen opens
-  // Database initialization is handled by the root layout
   useEffect(() => {
     loadNotes();
   }, []);
@@ -44,9 +47,6 @@ export default function NotesScreen() {
   function loadNotes() {
     try {
       const savedNotes = getNotes();
-
-      console.log("Notes loaded from SQLite:", savedNotes);
-
       setNotes(savedNotes);
     } catch (error) {
       console.error("Error loading notes:", error);
@@ -54,7 +54,7 @@ export default function NotesScreen() {
     }
   }
 
-  // CREATE: Save a new note
+  // CREATE: Add a new note
   function handleAddNote() {
     if (title.trim() === "" || content.trim() === "") {
       Alert.alert("Missing information", "Please enter a title and note.");
@@ -63,8 +63,6 @@ export default function NotesScreen() {
 
     try {
       addNote(title.trim(), content.trim(), category);
-
-      console.log("New note saved successfully!");
 
       setTitle("");
       setContent("");
@@ -85,8 +83,6 @@ export default function NotesScreen() {
     setContent(note.content);
     setCategory(note.category || "Personal");
     setEditingNoteId(note.id);
-
-    console.log("Editing note ID:", note.id);
   }
 
   // UPDATE: Save changes to an existing note
@@ -101,16 +97,7 @@ export default function NotesScreen() {
     }
 
     try {
-      console.log("Updating note ID:", editingNoteId);
-
-      const result = updateNote(
-        editingNoteId,
-        title.trim(),
-        content.trim(),
-        category,
-      );
-
-      console.log("Note update completed:", result);
+      updateNote(editingNoteId, title.trim(), content.trim(), category);
 
       setTitle("");
       setContent("");
@@ -139,11 +126,7 @@ export default function NotesScreen() {
     try {
       const newStatus = note.isFavorite === 1 ? 0 : 1;
 
-      console.log("Changing favourite status:", note.id, newStatus);
-
-      const result = toggleFavorite(note.id, newStatus);
-
-      console.log("Favourite update completed:", result);
+      toggleFavorite(note.id, newStatus);
 
       loadNotes();
     } catch (error) {
@@ -166,8 +149,6 @@ export default function NotesScreen() {
           try {
             deleteNote(id);
 
-            console.log("Note deleted:", id);
-
             if (editingNoteId === id) {
               handleCancelEdit();
             }
@@ -180,6 +161,54 @@ export default function NotesScreen() {
         },
       },
     ]);
+  }
+
+  // SEARCH, FILTER AND SORT NOTES
+  const filteredNotes = useMemo(() => {
+    let result = [...notes];
+
+    // Search by title or content
+    const search = searchText.trim().toLowerCase();
+
+    if (search !== "") {
+      result = result.filter(
+        (note) =>
+          note.title.toLowerCase().includes(search) ||
+          note.content.toLowerCase().includes(search),
+      );
+    }
+
+    // Filter by category
+    if (selectedFilter !== "All") {
+      result = result.filter((note) => note.category === selectedFilter);
+    }
+
+    // Show only favourite notes
+    if (showFavoritesOnly) {
+      result = result.filter((note) => note.isFavorite === 1);
+    }
+
+    // Sort notes by creation date
+    result.sort((a, b) => {
+      const dateA = new Date(a.createdAt).getTime();
+      const dateB = new Date(b.createdAt).getTime();
+
+      if (isNaN(dateA) || isNaN(dateB)) {
+        return 0;
+      }
+
+      return sortOrder === "Newest" ? dateB - dateA : dateA - dateB;
+    });
+
+    return result;
+  }, [notes, searchText, selectedFilter, showFavoritesOnly, sortOrder]);
+
+  // Clear all search and filter selections
+  function clearFilters() {
+    setSearchText("");
+    setSelectedFilter("All");
+    setShowFavoritesOnly(false);
+    setSortOrder("Newest");
   }
 
   return (
@@ -241,7 +270,6 @@ export default function NotesScreen() {
           ))}
         </View>
 
-        {/* Save or Update button */}
         <TouchableOpacity
           style={styles.saveButton}
           onPress={editingNoteId !== null ? handleUpdateNote : handleAddNote}
@@ -251,7 +279,6 @@ export default function NotesScreen() {
           </Text>
         </TouchableOpacity>
 
-        {/* Cancel editing button */}
         {editingNoteId !== null && (
           <TouchableOpacity
             style={styles.cancelButton}
@@ -262,31 +289,135 @@ export default function NotesScreen() {
         )}
       </View>
 
-      {/* Display saved notes */}
-      <Text style={styles.sectionTitle}>My Saved Notes ({notes.length})</Text>
+      {/* SEARCH SECTION */}
+      <Text style={styles.sectionTitle}>Find Your Notes</Text>
 
-      {notes.length === 0 ? (
+      <TextInput
+        style={styles.searchInput}
+        placeholder="🔍 Search by title or content..."
+        value={searchText}
+        onChangeText={setSearchText}
+        autoCapitalize="none"
+      />
+
+      {/* CATEGORY FILTER */}
+      <Text style={styles.label}>Filter by Category</Text>
+
+      <View style={styles.filterContainer}>
+        {(["All", "Personal", "Study", "Memory"] as CategoryFilter[]).map(
+          (item) => (
+            <TouchableOpacity
+              key={item}
+              style={[
+                styles.filterButton,
+                selectedFilter === item && styles.selectedFilter,
+              ]}
+              onPress={() => setSelectedFilter(item)}
+            >
+              <Text
+                style={[
+                  styles.filterText,
+                  selectedFilter === item && styles.selectedFilterText,
+                ]}
+              >
+                {item}
+              </Text>
+            </TouchableOpacity>
+          ),
+        )}
+      </View>
+
+      {/* FAVOURITE FILTER */}
+      <TouchableOpacity
+        style={[
+          styles.favoriteFilterButton,
+          showFavoritesOnly && styles.favoriteFilterActive,
+        ]}
+        onPress={() => setShowFavoritesOnly(!showFavoritesOnly)}
+      >
+        <Text
+          style={[
+            styles.favoriteFilterText,
+            showFavoritesOnly && styles.favoriteFilterActiveText,
+          ]}
+        >
+          {showFavoritesOnly
+            ? "★ Showing Favourite Notes"
+            : "☆ Show Favourite Notes"}
+        </Text>
+      </TouchableOpacity>
+
+      {/* SORTING */}
+      <View style={styles.sortHeader}>
+        <Text style={styles.label}>Sort Notes</Text>
+
+        <View style={styles.sortContainer}>
+          {(["Newest", "Oldest"] as SortOrder[]).map((item) => (
+            <TouchableOpacity
+              key={item}
+              style={[
+                styles.sortButton,
+                sortOrder === item && styles.selectedSort,
+              ]}
+              onPress={() => setSortOrder(item)}
+            >
+              <Text
+                style={[
+                  styles.sortText,
+                  sortOrder === item && styles.selectedSortText,
+                ]}
+              >
+                {item}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+
+      {/* SAVED NOTES */}
+      <View style={styles.savedHeader}>
+        <Text style={styles.sectionTitle}>
+          My Saved Notes ({filteredNotes.length})
+        </Text>
+
+        <TouchableOpacity onPress={clearFilters}>
+          <Text style={styles.clearText}>Clear Filters</Text>
+        </TouchableOpacity>
+      </View>
+
+      {filteredNotes.length === 0 ? (
         <View style={styles.emptyCard}>
           <Text style={styles.emptyText}>
-            No notes yet. Add your first note!
+            {notes.length === 0
+              ? "No notes yet. Add your first note!"
+              : "No matching notes found."}
           </Text>
         </View>
       ) : (
-        notes.map((note) => (
+        filteredNotes.map((note) => (
           <View style={styles.noteCard} key={note.id}>
             {/* Note title and category */}
             <View style={styles.noteHeader}>
-              <Text style={styles.noteTitle}>{note.title}</Text>
+              <Text style={styles.noteTitle}>
+                {note.isFavorite === 1 ? "★ " : ""}
+                {note.title}
+              </Text>
 
-              <Text style={styles.noteCategory}>{note.category}</Text>
+              <Text style={styles.noteCategory}>
+                {note.category || "Personal"}
+              </Text>
             </View>
 
             {/* Note content */}
             <Text style={styles.noteContent}>{note.content}</Text>
 
+            {/* Note creation date */}
+            <Text style={styles.noteDate}>
+              {note.createdAt ? new Date(note.createdAt).toLocaleString() : ""}
+            </Text>
+
             {/* Favourite, Edit and Delete buttons */}
             <View style={styles.actionContainer}>
-              {/* Favourite button */}
               <TouchableOpacity
                 style={styles.favoriteButton}
                 onPress={() => handleToggleFavorite(note)}
@@ -296,7 +427,6 @@ export default function NotesScreen() {
                 </Text>
               </TouchableOpacity>
 
-              {/* Edit button */}
               <TouchableOpacity
                 style={styles.editButton}
                 onPress={() => handleEditNote(note)}
@@ -304,7 +434,6 @@ export default function NotesScreen() {
                 <Text style={styles.editButtonText}>Edit</Text>
               </TouchableOpacity>
 
-              {/* Delete button */}
               <TouchableOpacity
                 style={styles.deleteButton}
                 onPress={() => handleDeleteNote(note.id)}
@@ -432,6 +561,106 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
 
+  searchInput: {
+    backgroundColor: "#F8F9FC",
+    borderWidth: 1,
+    borderColor: "#E0E0E0",
+    borderRadius: 12,
+    padding: 14,
+    fontSize: 15,
+    marginBottom: 20,
+  },
+
+  filterContainer: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 15,
+  },
+
+  filterButton: {
+    backgroundColor: "#F0EFFF",
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+  },
+
+  selectedFilter: {
+    backgroundColor: "#6C63FF",
+  },
+
+  filterText: {
+    color: "#6C63FF",
+    fontWeight: "600",
+  },
+
+  selectedFilterText: {
+    color: "#FFFFFF",
+  },
+
+  favoriteFilterButton: {
+    backgroundColor: "#FFF4D6",
+    padding: 13,
+    borderRadius: 10,
+    alignItems: "center",
+    marginBottom: 20,
+  },
+
+  favoriteFilterActive: {
+    backgroundColor: "#E6B94A",
+  },
+
+  favoriteFilterText: {
+    color: "#9A6B00",
+    fontWeight: "600",
+  },
+
+  favoriteFilterActiveText: {
+    color: "#FFFFFF",
+  },
+
+  sortHeader: {
+    marginBottom: 15,
+  },
+
+  sortContainer: {
+    flexDirection: "row",
+    gap: 10,
+  },
+
+  sortButton: {
+    backgroundColor: "#F0EFFF",
+    paddingVertical: 9,
+    paddingHorizontal: 18,
+    borderRadius: 8,
+  },
+
+  selectedSort: {
+    backgroundColor: "#6C63FF",
+  },
+
+  sortText: {
+    color: "#6C63FF",
+    fontWeight: "600",
+  },
+
+  selectedSortText: {
+    color: "#FFFFFF",
+  },
+
+  savedHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 15,
+  },
+
+  clearText: {
+    color: "#6C63FF",
+    fontWeight: "600",
+    marginBottom: 15,
+  },
+
   emptyCard: {
     backgroundColor: "#F8F9FC",
     padding: 20,
@@ -476,6 +705,12 @@ const styles = StyleSheet.create({
     color: "#555555",
     fontSize: 14,
     lineHeight: 21,
+  },
+
+  noteDate: {
+    color: "#888888",
+    fontSize: 11,
+    marginTop: 10,
   },
 
   actionContainer: {
