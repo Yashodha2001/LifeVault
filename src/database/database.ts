@@ -1,8 +1,11 @@
+import * as SecureStore from "expo-secure-store";
 import * as SQLite from "expo-sqlite";
 
 export const db = SQLite.openDatabaseSync("lifevault.db");
 
-// -------------------- NOTE TYPE --------------------
+// ==================================================
+//                     NOTE TYPE
+// ==================================================
 
 export type Note = {
   id: number;
@@ -13,7 +16,9 @@ export type Note = {
   createdAt: string;
 };
 
-// -------------------- REMINDER TYPE --------------------
+// ==================================================
+//                  REMINDER TYPE
+// ==================================================
 
 export type Reminder = {
   id: number;
@@ -26,12 +31,26 @@ export type Reminder = {
   createdAt: string;
 };
 
-// -------------------- INITIALIZE DATABASE --------------------
+// ==================================================
+//                  PASSWORD TYPE
+// ==================================================
+
+export type PasswordEntry = {
+  id: number;
+  website: string;
+  username: string;
+  createdAt: string;
+};
+
+// ==================================================
+//                INITIALIZE DATABASE
+// ==================================================
 
 export function initializeDatabase() {
   console.log("Starting database initialization...");
 
-  // Create notes table
+  // -------------------- NOTES TABLE --------------------
+
   db.execSync(`
     CREATE TABLE IF NOT EXISTS notes (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,7 +62,7 @@ export function initializeDatabase() {
     );
   `);
 
-  // Check whether the notes table has the favourite column
+  // Check notes favourite column
   const noteColumns = db.getAllSync<{ name: string }>(
     "PRAGMA table_info(notes)",
   );
@@ -52,12 +71,12 @@ export function initializeDatabase() {
     (column) => column.name === "isFavorite",
   );
 
-  // Add favourite column if it does not exist
   if (!hasFavoriteColumn) {
     db.execSync("ALTER TABLE notes ADD COLUMN isFavorite INTEGER DEFAULT 0");
   }
 
-  // Create reminders table
+  // -------------------- REMINDERS TABLE --------------------
+
   db.execSync(`
     CREATE TABLE IF NOT EXISTS reminders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,7 +90,7 @@ export function initializeDatabase() {
     );
   `);
 
-  // Check whether notificationId column exists
+  // Check notificationId column
   const reminderColumns = db.getAllSync<{ name: string }>(
     "PRAGMA table_info(reminders)",
   );
@@ -80,19 +99,32 @@ export function initializeDatabase() {
     (column) => column.name === "notificationId",
   );
 
-  // Add notificationId to an existing reminders table if needed
   if (!hasNotificationId) {
     db.execSync("ALTER TABLE reminders ADD COLUMN notificationId TEXT");
   }
+
+  // -------------------- PASSWORD TABLE --------------------
+
+  // Actual passwords are NOT stored in SQLite.
+  // They are stored separately using Expo SecureStore.
+
+  db.execSync(`
+    CREATE TABLE IF NOT EXISTS password_entries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      website TEXT NOT NULL,
+      username TEXT NOT NULL,
+      createdAt TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
 
   console.log("LifeVault database initialized successfully!");
 }
 
 // ==================================================
-//                    NOTES CRUD
+//                     NOTES CRUD
 // ==================================================
 
-// CREATE NOTE
+// ADD NOTE
 export function addNote(title: string, content: string, category: string) {
   return db.runSync(
     `INSERT INTO notes (title, content, category)
@@ -103,7 +135,7 @@ export function addNote(title: string, content: string, category: string) {
   );
 }
 
-// READ NOTES
+// GET NOTES
 export function getNotes(): Note[] {
   return db.getAllSync<Note>("SELECT * FROM notes ORDER BY id DESC");
 }
@@ -141,10 +173,10 @@ export function deleteNote(id: number) {
 }
 
 // ==================================================
-//                  REMINDERS CRUD
+//                   REMINDERS CRUD
 // ==================================================
 
-// CREATE REMINDER
+// ADD REMINDER
 export function addReminder(
   title: string,
   description: string,
@@ -164,7 +196,7 @@ export function addReminder(
   );
 }
 
-// READ REMINDERS
+// GET REMINDERS
 export function getReminders(): Reminder[] {
   return db.getAllSync<Reminder>(
     `SELECT * FROM reminders
@@ -217,4 +249,85 @@ export function toggleReminderCompleted(
 // DELETE REMINDER
 export function deleteReminder(id: number) {
   return db.runSync("DELETE FROM reminders WHERE id = ?", id);
+}
+
+// ==================================================
+//                   PASSWORD CRUD
+// ==================================================
+
+// Generate a unique SecureStore key
+function getPasswordKey(id: number) {
+  return `lifevault_password_${id}`;
+}
+
+// ADD PASSWORD
+export async function addPassword(
+  website: string,
+  username: string,
+  password: string,
+): Promise<number> {
+  // Save website and username in SQLite
+  const result = db.runSync(
+    `INSERT INTO password_entries (website, username)
+     VALUES (?, ?)`,
+    website,
+    username,
+  );
+
+  const id = result.lastInsertRowId;
+
+  try {
+    // Store actual password securely
+    await SecureStore.setItemAsync(getPasswordKey(id), password);
+
+    return id;
+  } catch (error) {
+    // Roll back SQLite entry if secure storage fails
+    db.runSync("DELETE FROM password_entries WHERE id = ?", id);
+
+    throw error;
+  }
+}
+
+// GET PASSWORD ENTRIES
+export function getPasswords(): PasswordEntry[] {
+  return db.getAllSync<PasswordEntry>(
+    `SELECT * FROM password_entries
+     ORDER BY id DESC`,
+  );
+}
+
+// GET ACTUAL PASSWORD
+export async function getPassword(id: number): Promise<string | null> {
+  return await SecureStore.getItemAsync(getPasswordKey(id));
+}
+
+// UPDATE PASSWORD
+export async function updatePassword(
+  id: number,
+  website: string,
+  username: string,
+  password: string,
+) {
+  // Update secure password first
+  await SecureStore.setItemAsync(getPasswordKey(id), password);
+
+  // Update website and username
+  return db.runSync(
+    `UPDATE password_entries
+     SET website = ?, username = ?
+     WHERE id = ?`,
+    website,
+    username,
+    id,
+  );
+}
+
+// DELETE PASSWORD
+export async function deletePassword(id: number) {
+  // Delete securely stored password
+  await SecureStore.deleteItemAsync(getPasswordKey(id));
+
+  // Delete SQLite entry
+  return db.runSync("DELETE FROM password_entries WHERE id = ?", id);
 }
