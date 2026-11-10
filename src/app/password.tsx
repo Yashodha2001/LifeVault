@@ -12,6 +12,8 @@ import {
   View,
 } from "react-native";
 
+import * as LocalAuthentication from "expo-local-authentication";
+
 import {
   addPassword,
   deletePassword,
@@ -23,6 +25,12 @@ import {
 
 export default function PasswordScreen() {
   // -------------------- STATES --------------------
+
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authMessage, setAuthMessage] = useState(
+    "Verify your identity to access your saved passwords.",
+  );
 
   const [passwords, setPasswords] = useState<PasswordEntry[]>([]);
 
@@ -44,11 +52,86 @@ export default function PasswordScreen() {
 
   const [loading, setLoading] = useState(false);
 
-  // -------------------- LOAD PASSWORDS --------------------
+  // -------------------- FINGERPRINT AUTHENTICATION --------------------
 
   useEffect(() => {
-    loadPasswords();
+    authenticateUser();
   }, []);
+
+  async function authenticateUser() {
+    try {
+      setAuthLoading(true);
+      setAuthMessage("Verify your identity to access your saved passwords.");
+
+      // Check whether the device supports biometric authentication.
+      const hasHardware = await LocalAuthentication.hasHardwareAsync();
+
+      if (!hasHardware) {
+        setAuthMessage(
+          "Biometric authentication is not available on this device.",
+        );
+
+        Alert.alert(
+          "Authentication Unavailable",
+          "This device does not support biometric authentication.",
+        );
+
+        return;
+      }
+
+      // Check whether a fingerprint or other biometric is registered.
+      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+
+      if (!isEnrolled) {
+        setAuthMessage(
+          "Please register a fingerprint in your phone settings first.",
+        );
+
+        Alert.alert(
+          "No Fingerprint Registered",
+          "Please register a fingerprint in your phone settings before accessing Password Vault.",
+        );
+
+        return;
+      }
+
+      // Display the device biometric authentication prompt.
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: "Unlock LifeVault Password Vault",
+        cancelLabel: "Cancel",
+        fallbackLabel: "Use device passcode",
+      });
+
+      if (result.success) {
+        setIsAuthenticated(true);
+        setAuthMessage("Authentication successful.");
+
+        // Load passwords only after authentication succeeds.
+        loadPasswords();
+      } else {
+        setIsAuthenticated(false);
+
+        setAuthMessage(
+          "Authentication failed or was cancelled. Please try again.",
+        );
+      }
+    } catch (error) {
+      console.log("Fingerprint authentication error:", error);
+
+      setIsAuthenticated(false);
+
+      setAuthMessage("Unable to authenticate. Please try again.");
+
+      Alert.alert(
+        "Authentication Error",
+        "Something went wrong during fingerprint authentication.",
+      );
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
+  // -------------------- LOAD PASSWORDS --------------------
 
   function loadPasswords() {
     try {
@@ -232,8 +315,38 @@ export default function PasswordScreen() {
     );
   });
 
+  // -------------------- AUTHENTICATION SCREEN --------------------
+
+  if (!isAuthenticated) {
+    return (
+      <View style={styles.lockScreen}>
+        <Text style={styles.lockIcon}>🔐</Text>
+
+        <Text style={styles.lockTitle}>Password Vault Locked</Text>
+
+        <Text style={styles.lockSubtitle}>
+          Your saved passwords are protected by biometric authentication.
+        </Text>
+
+        <Text style={styles.authMessage}>
+          {authLoading ? "Checking authentication..." : authMessage}
+        </Text>
+
+        <TouchableOpacity
+          style={[styles.unlockButton, authLoading && styles.disabledButton]}
+          onPress={authenticateUser}
+          disabled={authLoading}
+        >
+          <Text style={styles.unlockButtonText}>
+            {authLoading ? "Please wait..." : "🔓 Unlock with Fingerprint"}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   // ==================================================
-  //                       UI
+  //                 PASSWORD VAULT UI
   // ==================================================
 
   return (
@@ -245,8 +358,6 @@ export default function PasswordScreen() {
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
       >
-        {/* HEADER */}
-
         <Text style={styles.title}>🔐 Password Vault</Text>
 
         <Text style={styles.subtitle}>
@@ -319,8 +430,6 @@ export default function PasswordScreen() {
           Saved Passwords ({passwords.length})
         </Text>
 
-        {/* SEARCH */}
-
         <TextInput
           style={styles.searchInput}
           placeholder="Search website or username..."
@@ -328,8 +437,6 @@ export default function PasswordScreen() {
           onChangeText={setSearchText}
           autoCapitalize="none"
         />
-
-        {/* PASSWORD LIST */}
 
         {filteredPasswords.length === 0 ? (
           <View style={styles.emptyContainer}>
@@ -397,6 +504,56 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#F5F5FA",
+  },
+
+  lockScreen: {
+    flex: 1,
+    backgroundColor: "#F5F5FA",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 25,
+  },
+
+  lockIcon: {
+    fontSize: 65,
+    marginBottom: 20,
+  },
+
+  lockTitle: {
+    fontSize: 25,
+    fontWeight: "bold",
+    color: "#6C63FF",
+    textAlign: "center",
+  },
+
+  lockSubtitle: {
+    fontSize: 15,
+    color: "#666666",
+    textAlign: "center",
+    marginTop: 12,
+    lineHeight: 23,
+  },
+
+  authMessage: {
+    fontSize: 14,
+    color: "#555555",
+    textAlign: "center",
+    marginTop: 25,
+    marginBottom: 20,
+  },
+
+  unlockButton: {
+    backgroundColor: "#6C63FF",
+    padding: 16,
+    borderRadius: 12,
+    width: "100%",
+    alignItems: "center",
+  },
+
+  unlockButtonText: {
+    color: "#FFFFFF",
+    fontSize: 16,
+    fontWeight: "bold",
   },
 
   scrollContent: {
