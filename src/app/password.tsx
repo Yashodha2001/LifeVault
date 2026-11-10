@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   Alert,
+  AppState,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -13,6 +14,7 @@ import {
 } from "react-native";
 
 import * as LocalAuthentication from "expo-local-authentication";
+import * as ScreenCapture from "expo-screen-capture";
 
 import {
   addPassword,
@@ -24,13 +26,70 @@ import {
 } from "../database/database";
 
 export default function PasswordScreen() {
-  // -------------------- STATES --------------------
+  // -------------------- SCREEN CAPTURE PROTECTION --------------------
+
+  useEffect(() => {
+    let isMounted = true;
+    let protectionEnabled = false;
+
+    async function enableScreenCaptureProtection() {
+      try {
+        const isAvailable = await ScreenCapture.isAvailableAsync();
+
+        if (!isAvailable) {
+          console.warn("Screen capture protection is unavailable.");
+          return;
+        }
+
+        await ScreenCapture.preventScreenCaptureAsync(
+          "lifevault-password-vault",
+        );
+
+        protectionEnabled = true;
+
+        if (isMounted) {
+          console.log("Password Vault screenshot protection enabled.");
+        } else {
+          await ScreenCapture.allowScreenCaptureAsync(
+            "lifevault-password-vault",
+          );
+        }
+      } catch (error) {
+        console.error("Screen capture protection error:", error);
+      }
+    }
+
+    enableScreenCaptureProtection();
+
+    return () => {
+      isMounted = false;
+
+      if (protectionEnabled) {
+        ScreenCapture.allowScreenCaptureAsync("lifevault-password-vault").catch(
+          (error) => {
+            console.error("Unable to release screen protection:", error);
+          },
+        );
+      }
+    };
+  }, []);
+
+  // -------------------- AUTHENTICATION STATES --------------------
 
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
+
   const [authMessage, setAuthMessage] = useState(
     "Verify your identity to access your saved passwords.",
   );
+
+  // Prevent multiple fingerprint prompts.
+  const isAuthenticating = useRef(false);
+
+  // Track whether the app is currently active.
+  const appIsActive = useRef(AppState.currentState === "active");
+
+  // -------------------- PASSWORD STATES --------------------
 
   const [passwords, setPasswords] = useState<PasswordEntry[]>([]);
 
@@ -52,19 +111,84 @@ export default function PasswordScreen() {
 
   const [loading, setLoading] = useState(false);
 
-  // -------------------- FINGERPRINT AUTHENTICATION --------------------
+  // -------------------- APP STATE LISTENER --------------------
 
   useEffect(() => {
-    authenticateUser();
+    appIsActive.current = AppState.currentState === "active";
+
+    // Authenticate when Password Vault first opens.
+    if (appIsActive.current) {
+      authenticateUser();
+    }
+
+    // Listen for app background and foreground changes.
+    const subscription = AppState.addEventListener("change", (nextAppState) => {
+      if (nextAppState === "background") {
+        // Lock the vault when the app goes into the background.
+        appIsActive.current = false;
+
+        lockVault();
+      } else if (nextAppState === "active") {
+        // Authenticate again when returning to the app.
+        appIsActive.current = true;
+
+        authenticateUser();
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
   }, []);
 
+  // -------------------- AUTOMATIC VAULT LOCK --------------------
+
+  function lockVault() {
+    // Lock Password Vault.
+    setIsAuthenticated(false);
+
+    // Clear passwords loaded into temporary React state.
+    setPasswords([]);
+
+    // Clear temporarily displayed passwords.
+    setVisiblePasswords({});
+    setShowPassword({});
+
+    // Clear unfinished password form.
+    clearForm();
+
+    // Clear search text.
+    setSearchText("");
+
+    console.log("Password Vault locked automatically.");
+  }
+
+  // -------------------- FINGERPRINT AUTHENTICATION --------------------
+
   async function authenticateUser() {
+    // Do not authenticate when the app is in the background.
+    if (!appIsActive.current) {
+      return;
+    }
+
+    // Prevent multiple fingerprint prompts.
+    if (isAuthenticating.current) {
+      return;
+    }
+
+    isAuthenticating.current = true;
+
     try {
       setAuthLoading(true);
+
       setAuthMessage("Verify your identity to access your saved passwords.");
 
-      // Check whether the device supports biometric authentication.
+      // Check biometric hardware.
       const hasHardware = await LocalAuthentication.hasHardwareAsync();
+
+      if (!appIsActive.current) {
+        return;
+      }
 
       if (!hasHardware) {
         setAuthMessage(
@@ -79,8 +203,12 @@ export default function PasswordScreen() {
         return;
       }
 
-      // Check whether a fingerprint or other biometric is registered.
+      // Check registered fingerprints.
       const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+
+      if (!appIsActive.current) {
+        return;
+      }
 
       if (!isEnrolled) {
         setAuthMessage(
@@ -89,24 +217,30 @@ export default function PasswordScreen() {
 
         Alert.alert(
           "No Fingerprint Registered",
-          "Please register a fingerprint in your phone settings before accessing Password Vault.",
+          "Please register a fingerprint in your phone settings.",
         );
 
         return;
       }
 
-      // Display the device biometric authentication prompt.
+      // Display fingerprint authentication prompt.
       const result = await LocalAuthentication.authenticateAsync({
         promptMessage: "Unlock LifeVault Password Vault",
         cancelLabel: "Cancel",
         fallbackLabel: "Use device passcode",
       });
 
+      // Do not unlock if the app went into the background.
+      if (!appIsActive.current) {
+        return;
+      }
+
       if (result.success) {
         setIsAuthenticated(true);
+
         setAuthMessage("Authentication successful.");
 
-        // Load passwords only after authentication succeeds.
+        // Load saved passwords after successful authentication.
         loadPasswords();
       } else {
         setIsAuthenticated(false);
@@ -127,6 +261,8 @@ export default function PasswordScreen() {
         "Something went wrong during fingerprint authentication.",
       );
     } finally {
+      isAuthenticating.current = false;
+
       setAuthLoading(false);
     }
   }
@@ -136,9 +272,11 @@ export default function PasswordScreen() {
   function loadPasswords() {
     try {
       const savedPasswords = getPasswords();
+
       setPasswords(savedPasswords);
     } catch (error) {
       console.log("Load passwords error:", error);
+
       Alert.alert("Error", "Unable to load saved passwords.");
     }
   }
@@ -149,6 +287,7 @@ export default function PasswordScreen() {
     setWebsite("");
     setUsername("");
     setPassword("");
+
     setEditingId(null);
   }
 
@@ -160,6 +299,7 @@ export default function PasswordScreen() {
         "Missing Information",
         "Please enter the website, username and password.",
       );
+
       return;
     }
 
@@ -182,6 +322,7 @@ export default function PasswordScreen() {
       }
 
       clearForm();
+
       loadPasswords();
     } catch (error) {
       console.log("Save password error:", error);
@@ -203,10 +344,12 @@ export default function PasswordScreen() {
           "Password Not Found",
           "The securely stored password could not be retrieved.",
         );
+
         return;
       }
 
       setEditingId(item.id);
+
       setWebsite(item.website);
       setUsername(item.username);
       setPassword(savedPassword);
@@ -227,6 +370,7 @@ export default function PasswordScreen() {
         ...previous,
         [id]: false,
       }));
+
       return;
     }
 
@@ -235,6 +379,7 @@ export default function PasswordScreen() {
 
       if (savedPassword === null) {
         Alert.alert("Error", "Password not found in secure storage.");
+
         return;
       }
 
@@ -280,13 +425,17 @@ export default function PasswordScreen() {
 
       setVisiblePasswords((previous) => {
         const updated = { ...previous };
+
         delete updated[id];
+
         return updated;
       });
 
       setShowPassword((previous) => {
         const updated = { ...previous };
+
         delete updated[id];
+
         return updated;
       });
 
@@ -315,7 +464,9 @@ export default function PasswordScreen() {
     );
   });
 
-  // -------------------- AUTHENTICATION SCREEN --------------------
+  // ==================================================
+  //              AUTHENTICATION SCREEN
+  // ==================================================
 
   if (!isAuthenticated) {
     return (
@@ -358,6 +509,8 @@ export default function PasswordScreen() {
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
       >
+        {/* HEADER */}
+
         <Text style={styles.title}>🔐 Password Vault</Text>
 
         <Text style={styles.subtitle}>
@@ -430,6 +583,8 @@ export default function PasswordScreen() {
           Saved Passwords ({passwords.length})
         </Text>
 
+        {/* SEARCH */}
+
         <TextInput
           style={styles.searchInput}
           placeholder="Search website or username..."
@@ -437,6 +592,8 @@ export default function PasswordScreen() {
           onChangeText={setSearchText}
           autoCapitalize="none"
         />
+
+        {/* PASSWORD LIST */}
 
         {filteredPasswords.length === 0 ? (
           <View style={styles.emptyContainer}>
