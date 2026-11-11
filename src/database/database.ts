@@ -43,6 +43,23 @@ export type PasswordEntry = {
 };
 
 // ==================================================
+//                  MEDICINE TYPE
+// ==================================================
+
+export type Medicine = {
+  id: number;
+  name: string;
+  dosage: string;
+  instructions: string;
+  frequency: string;
+  reminderTime: string;
+  startDate: string;
+  endDate: string;
+  isActive: number;
+  createdAt: string;
+};
+
+// ==================================================
 //                INITIALIZE DATABASE
 // ==================================================
 
@@ -113,6 +130,23 @@ export function initializeDatabase() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       website TEXT NOT NULL,
       username TEXT NOT NULL,
+      createdAt TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  // -------------------- MEDICINES TABLE --------------------
+
+  db.execSync(`
+    CREATE TABLE IF NOT EXISTS medicines (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      dosage TEXT NOT NULL,
+      instructions TEXT,
+      frequency TEXT NOT NULL,
+      reminderTime TEXT NOT NULL,
+      startDate TEXT NOT NULL,
+      endDate TEXT,
+      isActive INTEGER DEFAULT 1,
       createdAt TEXT DEFAULT CURRENT_TIMESTAMP
     );
   `);
@@ -330,4 +364,89 @@ export async function deletePassword(id: number) {
 
   // Delete SQLite entry
   return db.runSync("DELETE FROM password_entries WHERE id = ?", id);
+}
+
+// ==================================================
+//                   MEDICINE CRUD
+// ==================================================
+
+// ADD MEDICINE
+export function addMedicine(
+  name: string,
+  dosage: string,
+  instructions: string,
+  frequency: string,
+  reminderTime: string,
+  startDate: string,
+  endDate: string,
+) {
+  return db.runSync(
+    `INSERT INTO medicines
+     (name, dosage, instructions, frequency,
+      reminderTime, startDate, endDate)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    name,
+    dosage,
+    instructions,
+    frequency,
+    reminderTime,
+    startDate,
+    endDate,
+  );
+}
+
+// GET ALL MEDICINES
+export function getMedicines(): Medicine[] {
+  return db.getAllSync<Medicine>(
+    `SELECT * FROM medicines
+     ORDER BY id DESC`,
+  );
+}
+
+// UPDATE MEDICINE
+export function updateMedicine(
+  id: number,
+  name: string,
+  dosage: string,
+  instructions: string,
+  frequency: string,
+  reminderTime: string,
+  startDate: string,
+  endDate: string,
+) {
+  return db.runSync(
+    `UPDATE medicines
+     SET name = ?,
+         dosage = ?,
+         instructions = ?,
+         frequency = ?,
+         reminderTime = ?,
+         startDate = ?,
+         endDate = ?
+     WHERE id = ?`,
+    name,
+    dosage,
+    instructions,
+    frequency,
+    reminderTime,
+    startDate,
+    endDate,
+    id,
+  );
+}
+
+// ACTIVATE / DEACTIVATE MEDICINE
+export function toggleMedicineStatus(id: number, isActive: number) {
+  return db.runSync(
+    `UPDATE medicines
+     SET isActive = ?
+     WHERE id = ?`,
+    isActive,
+    id,
+  );
+}
+
+// DELETE MEDICINE
+export function deleteMedicine(id: number) {
+  return db.runSync("DELETE FROM medicines WHERE id = ?", id);
 }
