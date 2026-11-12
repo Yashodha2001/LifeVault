@@ -1,11 +1,15 @@
 import * as SecureStore from "expo-secure-store";
 import * as SQLite from "expo-sqlite";
 
+// --------------------------------------------------
+// DATABASE CONNECTION
+// --------------------------------------------------
+
 export const db = SQLite.openDatabaseSync("lifevault.db");
 
-// ==================================================
-//                     NOTE TYPE
-// ==================================================
+// --------------------------------------------------
+// TYPES
+// --------------------------------------------------
 
 export type Note = {
   id: number;
@@ -15,10 +19,6 @@ export type Note = {
   isFavorite: number;
   createdAt: string;
 };
-
-// ==================================================
-//                  REMINDER TYPE
-// ==================================================
 
 export type Reminder = {
   id: number;
@@ -31,20 +31,12 @@ export type Reminder = {
   createdAt: string;
 };
 
-// ==================================================
-//                  PASSWORD TYPE
-// ==================================================
-
 export type PasswordEntry = {
   id: number;
   website: string;
   username: string;
   createdAt: string;
 };
-
-// ==================================================
-//                  MEDICINE TYPE
-// ==================================================
 
 export type Medicine = {
   id: number;
@@ -54,20 +46,20 @@ export type Medicine = {
   frequency: string;
   reminderTime: string;
   startDate: string;
-  endDate: string;
+  endDate: string | null;
   isActive: number;
+  notificationId: string | null;
   createdAt: string;
 };
 
-// ==================================================
-//                INITIALIZE DATABASE
-// ==================================================
+// --------------------------------------------------
+// DATABASE INITIALIZATION
+// --------------------------------------------------
 
 export function initializeDatabase() {
   console.log("Starting database initialization...");
 
-  // -------------------- NOTES TABLE --------------------
-
+  // NOTES TABLE
   db.execSync(`
     CREATE TABLE IF NOT EXISTS notes (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -79,21 +71,7 @@ export function initializeDatabase() {
     );
   `);
 
-  // Check notes favourite column
-  const noteColumns = db.getAllSync<{ name: string }>(
-    "PRAGMA table_info(notes)",
-  );
-
-  const hasFavoriteColumn = noteColumns.some(
-    (column) => column.name === "isFavorite",
-  );
-
-  if (!hasFavoriteColumn) {
-    db.execSync("ALTER TABLE notes ADD COLUMN isFavorite INTEGER DEFAULT 0");
-  }
-
-  // -------------------- REMINDERS TABLE --------------------
-
+  // REMINDERS TABLE
   db.execSync(`
     CREATE TABLE IF NOT EXISTS reminders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -107,24 +85,7 @@ export function initializeDatabase() {
     );
   `);
 
-  // Check notificationId column
-  const reminderColumns = db.getAllSync<{ name: string }>(
-    "PRAGMA table_info(reminders)",
-  );
-
-  const hasNotificationId = reminderColumns.some(
-    (column) => column.name === "notificationId",
-  );
-
-  if (!hasNotificationId) {
-    db.execSync("ALTER TABLE reminders ADD COLUMN notificationId TEXT");
-  }
-
-  // -------------------- PASSWORD TABLE --------------------
-
-  // Actual passwords are NOT stored in SQLite.
-  // They are stored separately using Expo SecureStore.
-
+  // PASSWORD VAULT TABLE
   db.execSync(`
     CREATE TABLE IF NOT EXISTS password_entries (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -134,8 +95,7 @@ export function initializeDatabase() {
     );
   `);
 
-  // -------------------- MEDICINES TABLE --------------------
-
+  // MEDICINES TABLE
   db.execSync(`
     CREATE TABLE IF NOT EXISTS medicines (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -147,15 +107,60 @@ export function initializeDatabase() {
       startDate TEXT NOT NULL,
       endDate TEXT,
       isActive INTEGER DEFAULT 1,
+      notificationId TEXT,
       createdAt TEXT DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
+  // ------------------------------------------------
+  // DATABASE MIGRATIONS
+  // ------------------------------------------------
+
+  // NOTES: Add isFavorite column if missing
+  const noteColumns = db.getAllSync<{ name: string }>(
+    "PRAGMA table_info(notes)",
+  );
+
+  const hasFavorite = noteColumns.some(
+    (column) => column.name === "isFavorite",
+  );
+
+  if (!hasFavorite) {
+    db.execSync("ALTER TABLE notes ADD COLUMN isFavorite INTEGER DEFAULT 0");
+  }
+
+  // REMINDERS: Add notificationId column if missing
+  const reminderColumns = db.getAllSync<{ name: string }>(
+    "PRAGMA table_info(reminders)",
+  );
+
+  const hasReminderNotificationId = reminderColumns.some(
+    (column) => column.name === "notificationId",
+  );
+
+  if (!hasReminderNotificationId) {
+    db.execSync("ALTER TABLE reminders ADD COLUMN notificationId TEXT");
+  }
+
+  // MEDICINES: Add notificationId column if missing
+  const medicineColumns = db.getAllSync<{ name: string }>(
+    "PRAGMA table_info(medicines)",
+  );
+
+  const hasMedicineNotificationId = medicineColumns.some(
+    (column) => column.name === "notificationId",
+  );
+
+  if (!hasMedicineNotificationId) {
+    db.execSync("ALTER TABLE medicines ADD COLUMN notificationId TEXT");
+  }
+
   console.log("LifeVault database initialized successfully!");
+  console.log("Database initialization completed!");
 }
 
 // ==================================================
-//                     NOTES CRUD
+// NOTES FUNCTIONS
 // ==================================================
 
 // ADD NOTE
@@ -169,9 +174,9 @@ export function addNote(title: string, content: string, category: string) {
   );
 }
 
-// GET NOTES
+// GET ALL NOTES
 export function getNotes(): Note[] {
-  return db.getAllSync<Note>("SELECT * FROM notes ORDER BY id DESC");
+  return db.getAllSync<Note>("SELECT * FROM notes ORDER BY createdAt DESC");
 }
 
 // UPDATE NOTE
@@ -207,7 +212,7 @@ export function deleteNote(id: number) {
 }
 
 // ==================================================
-//                   REMINDERS CRUD
+// REMINDER FUNCTIONS
 // ==================================================
 
 // ADD REMINDER
@@ -230,11 +235,10 @@ export function addReminder(
   );
 }
 
-// GET REMINDERS
+// GET ALL REMINDERS
 export function getReminders(): Reminder[] {
   return db.getAllSync<Reminder>(
-    `SELECT * FROM reminders
-     ORDER BY reminderDateTime ASC`,
+    "SELECT * FROM reminders ORDER BY reminderDateTime ASC",
   );
 }
 
@@ -264,17 +268,22 @@ export function updateReminder(
   );
 }
 
-// COMPLETE OR UNDO REMINDER
-export function toggleReminderCompleted(
+// TOGGLE REMINDER COMPLETED
+export function toggleReminderCompleted(id: number, isCompleted: number) {
+  return db.runSync(
+    "UPDATE reminders SET isCompleted = ? WHERE id = ?",
+    isCompleted,
+    id,
+  );
+}
+
+// UPDATE REMINDER NOTIFICATION ID
+export function updateReminderNotificationId(
   id: number,
-  isCompleted: number,
   notificationId: string | null,
 ) {
   return db.runSync(
-    `UPDATE reminders
-     SET isCompleted = ?, notificationId = ?
-     WHERE id = ?`,
-    isCompleted,
+    "UPDATE reminders SET notificationId = ? WHERE id = ?",
     notificationId,
     id,
   );
@@ -286,21 +295,18 @@ export function deleteReminder(id: number) {
 }
 
 // ==================================================
-//                   PASSWORD CRUD
+// PASSWORD VAULT FUNCTIONS
 // ==================================================
 
-// Generate a unique SecureStore key
-function getPasswordKey(id: number) {
-  return `lifevault_password_${id}`;
-}
-
 // ADD PASSWORD
+// Actual password is stored securely in Expo SecureStore.
+// Only website and username are stored in SQLite.
+
 export async function addPassword(
   website: string,
   username: string,
   password: string,
-): Promise<number> {
-  // Save website and username in SQLite
+) {
   const result = db.runSync(
     `INSERT INTO password_entries (website, username)
      VALUES (?, ?)`,
@@ -311,43 +317,37 @@ export async function addPassword(
   const id = result.lastInsertRowId;
 
   try {
-    // Store actual password securely
-    await SecureStore.setItemAsync(getPasswordKey(id), password);
-
-    return id;
+    await SecureStore.setItemAsync(`lifevault_password_${id}`, password);
   } catch (error) {
-    // Roll back SQLite entry if secure storage fails
+    // Remove the database record if secure storage fails.
     db.runSync("DELETE FROM password_entries WHERE id = ?", id);
 
     throw error;
   }
+
+  return result;
 }
 
-// GET PASSWORD ENTRIES
+// GET ALL PASSWORD ENTRIES
 export function getPasswords(): PasswordEntry[] {
   return db.getAllSync<PasswordEntry>(
-    `SELECT * FROM password_entries
-     ORDER BY id DESC`,
+    "SELECT * FROM password_entries ORDER BY createdAt DESC",
   );
 }
 
-// GET ACTUAL PASSWORD
+// GET ONE PASSWORD
 export async function getPassword(id: number): Promise<string | null> {
-  return await SecureStore.getItemAsync(getPasswordKey(id));
+  return SecureStore.getItemAsync(`lifevault_password_${id}`);
 }
 
-// UPDATE PASSWORD
+// UPDATE PASSWORD ENTRY
 export async function updatePassword(
   id: number,
   website: string,
   username: string,
   password: string,
 ) {
-  // Update secure password first
-  await SecureStore.setItemAsync(getPasswordKey(id), password);
-
-  // Update website and username
-  return db.runSync(
+  db.runSync(
     `UPDATE password_entries
      SET website = ?, username = ?
      WHERE id = ?`,
@@ -355,19 +355,19 @@ export async function updatePassword(
     username,
     id,
   );
+
+  await SecureStore.setItemAsync(`lifevault_password_${id}`, password);
 }
 
-// DELETE PASSWORD
+// DELETE PASSWORD ENTRY
 export async function deletePassword(id: number) {
-  // Delete securely stored password
-  await SecureStore.deleteItemAsync(getPasswordKey(id));
+  await SecureStore.deleteItemAsync(`lifevault_password_${id}`);
 
-  // Delete SQLite entry
   return db.runSync("DELETE FROM password_entries WHERE id = ?", id);
 }
 
 // ==================================================
-//                   MEDICINE CRUD
+// MEDICINE FUNCTIONS
 // ==================================================
 
 // ADD MEDICINE
@@ -382,9 +382,17 @@ export function addMedicine(
 ) {
   return db.runSync(
     `INSERT INTO medicines
-     (name, dosage, instructions, frequency,
-      reminderTime, startDate, endDate)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+     (
+       name,
+       dosage,
+       instructions,
+       frequency,
+       reminderTime,
+       startDate,
+       endDate,
+       isActive
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
     name,
     dosage,
     instructions,
@@ -398,8 +406,7 @@ export function addMedicine(
 // GET ALL MEDICINES
 export function getMedicines(): Medicine[] {
   return db.getAllSync<Medicine>(
-    `SELECT * FROM medicines
-     ORDER BY id DESC`,
+    "SELECT * FROM medicines ORDER BY createdAt DESC",
   );
 }
 
@@ -438,10 +445,20 @@ export function updateMedicine(
 // ACTIVATE / DEACTIVATE MEDICINE
 export function toggleMedicineStatus(id: number, isActive: number) {
   return db.runSync(
-    `UPDATE medicines
-     SET isActive = ?
-     WHERE id = ?`,
+    "UPDATE medicines SET isActive = ? WHERE id = ?",
     isActive,
+    id,
+  );
+}
+
+// UPDATE MEDICINE NOTIFICATION ID
+export function updateMedicineNotificationId(
+  id: number,
+  notificationId: string | null,
+) {
+  return db.runSync(
+    "UPDATE medicines SET notificationId = ? WHERE id = ?",
+    notificationId,
     id,
   );
 }

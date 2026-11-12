@@ -18,8 +18,18 @@ import {
   getMedicines,
   toggleMedicineStatus,
   updateMedicine,
+  updateMedicineNotificationId,
   type Medicine,
 } from "../database/database";
+
+import {
+  cancelMedicineNotification,
+  scheduleDailyMedicineNotification,
+} from "../utils/notifications";
+
+// ==================================================
+// MEDICINE SCREEN
+// ==================================================
 
 export default function MedicineScreen() {
   const [medicines, setMedicines] = useState<Medicine[]>([]);
@@ -35,13 +45,63 @@ export default function MedicineScreen() {
   const [editingId, setEditingId] = useState<number | null>(null);
 
   useEffect(() => {
-    loadMedicines();
+    loadMedicines(true);
   }, []);
 
-  // Load medicines from SQLite
-  const loadMedicines = () => {
+  // ==================================================
+  // DATE FUNCTIONS
+  // ==================================================
+
+  const getTodayDate = () => {
+    const today = new Date();
+
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, "0");
+    const day = String(today.getDate()).padStart(2, "0");
+
+    return `${year}-${month}-${day}`;
+  };
+
+  const canScheduleMedicine = (medicine: Medicine) => {
+    const today = getTodayDate();
+
+    if (medicine.startDate > today) return false;
+
+    if (medicine.endDate && medicine.endDate < today) return false;
+
+    return true;
+  };
+
+  // ==================================================
+  // LOAD MEDICINES
+  // ==================================================
+
+  const loadMedicines = async (restoreNotifications = false) => {
     try {
-      const data = getMedicines();
+      let data = getMedicines();
+
+      if (restoreNotifications) {
+        for (const medicine of data) {
+          if (
+            medicine.isActive === 1 &&
+            !medicine.notificationId &&
+            canScheduleMedicine(medicine)
+          ) {
+            const notificationId = await scheduleDailyMedicineNotification(
+              medicine.name,
+              medicine.dosage,
+              medicine.reminderTime,
+            );
+
+            if (notificationId) {
+              updateMedicineNotificationId(medicine.id, notificationId);
+            }
+          }
+        }
+
+        data = getMedicines();
+      }
+
       setMedicines(data);
     } catch (error) {
       console.log("Load medicine error:", error);
@@ -49,7 +109,10 @@ export default function MedicineScreen() {
     }
   };
 
-  // Clear form
+  // ==================================================
+  // CLEAR FORM
+  // ==================================================
+
   const clearForm = () => {
     setName("");
     setDosage("");
@@ -61,8 +124,11 @@ export default function MedicineScreen() {
     setEditingId(null);
   };
 
-  // Save or update medicine
-  const handleSaveMedicine = () => {
+  // ==================================================
+  // SAVE OR UPDATE MEDICINE
+  // ==================================================
+
+  const handleSaveMedicine = async () => {
     if (
       !name.trim() ||
       !dosage.trim() ||
@@ -77,8 +143,8 @@ export default function MedicineScreen() {
       return;
     }
 
-    // Validate time format (HH:MM)
     const timePattern = /^([01]\d|2[0-3]):[0-5]\d$/;
+    const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 
     if (!timePattern.test(reminderTime.trim())) {
       Alert.alert(
@@ -87,9 +153,6 @@ export default function MedicineScreen() {
       );
       return;
     }
-
-    // Validate date format (YYYY-MM-DD)
-    const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 
     if (!datePattern.test(startDate.trim())) {
       Alert.alert(
@@ -116,7 +179,26 @@ export default function MedicineScreen() {
     }
 
     try {
+      let medicineId: number;
+      let isActive = 1;
+
+      const wasEditing = editingId !== null;
+
       if (editingId !== null) {
+        const existingMedicine = medicines.find(
+          (medicine) => medicine.id === editingId,
+        );
+
+        if (!existingMedicine) {
+          Alert.alert("Error", "Medicine record not found.");
+          return;
+        }
+
+        medicineId = editingId;
+        isActive = existingMedicine.isActive;
+
+        await cancelMedicineNotification(existingMedicine.notificationId);
+
         updateMedicine(
           editingId,
           name.trim(),
@@ -128,9 +210,9 @@ export default function MedicineScreen() {
           endDate.trim(),
         );
 
-        Alert.alert("Success", "Medicine updated successfully!");
+        updateMedicineNotificationId(editingId, null);
       } else {
-        addMedicine(
+        const result = addMedicine(
           name.trim(),
           dosage.trim(),
           instructions.trim(),
@@ -140,18 +222,70 @@ export default function MedicineScreen() {
           endDate.trim(),
         );
 
-        Alert.alert("Success", "Medicine added successfully!");
+        medicineId = result.lastInsertRowId;
+      }
+
+      let notificationMessage = "";
+
+      if (isActive === 1) {
+        const temporaryMedicine: Medicine = {
+          id: medicineId,
+          name: name.trim(),
+          dosage: dosage.trim(),
+          instructions: instructions.trim(),
+          frequency: frequency.trim(),
+          reminderTime: reminderTime.trim(),
+          startDate: startDate.trim(),
+          endDate: endDate.trim() || null,
+          isActive,
+          notificationId: null,
+          createdAt: "",
+        };
+
+        if (canScheduleMedicine(temporaryMedicine)) {
+          const notificationId = await scheduleDailyMedicineNotification(
+            temporaryMedicine.name,
+            temporaryMedicine.dosage,
+            temporaryMedicine.reminderTime,
+          );
+
+          if (notificationId) {
+            updateMedicineNotificationId(medicineId, notificationId);
+
+            notificationMessage =
+              "\nDaily notification scheduled successfully.";
+          } else {
+            notificationMessage =
+              "\nMedicine saved, but notification could not be scheduled.";
+          }
+        } else {
+          notificationMessage =
+            "\nNotification will be scheduled when you open LifeVault on or after the Start Date.";
+        }
+      } else {
+        notificationMessage =
+          "\nMedicine is inactive. No notification scheduled.";
       }
 
       clearForm();
-      loadMedicines();
+      await loadMedicines(false);
+
+      Alert.alert(
+        "Success",
+        wasEditing
+          ? `Medicine updated successfully!${notificationMessage}`
+          : `Medicine added successfully!${notificationMessage}`,
+      );
     } catch (error) {
       console.log("Save medicine error:", error);
-      Alert.alert("Error", "Unable to save medicine.");
+      Alert.alert("Error", "Unable to save medicine. Please try again.");
     }
   };
 
-  // Edit medicine
+  // ==================================================
+  // EDIT MEDICINE
+  // ==================================================
+
   const handleEditMedicine = (medicine: Medicine) => {
     setEditingId(medicine.id);
     setName(medicine.name);
@@ -168,29 +302,39 @@ export default function MedicineScreen() {
     );
   };
 
-  // Delete medicine
+  // ==================================================
+  // DELETE MEDICINE
+  // ==================================================
+
   const handleDeleteMedicine = (id: number) => {
     Alert.alert(
       "Delete Medicine",
       "Are you sure you want to delete this medicine?",
       [
-        {
-          text: "Cancel",
-          style: "cancel",
-        },
+        { text: "Cancel", style: "cancel" },
         {
           text: "Delete",
           style: "destructive",
-          onPress: () => {
+          onPress: async () => {
             try {
+              const medicine = medicines.find((item) => item.id === id);
+
+              if (medicine?.notificationId) {
+                await cancelMedicineNotification(medicine.notificationId);
+              }
+
               deleteMedicine(id);
-              loadMedicines();
 
               if (editingId === id) {
                 clearForm();
               }
 
-              Alert.alert("Success", "Medicine deleted successfully!");
+              await loadMedicines(false);
+
+              Alert.alert(
+                "Success",
+                "Medicine deleted and its notification cancelled.",
+              );
             } catch (error) {
               console.log("Delete medicine error:", error);
               Alert.alert("Error", "Unable to delete medicine.");
@@ -201,17 +345,70 @@ export default function MedicineScreen() {
     );
   };
 
-  // Activate or deactivate medicine
-  const handleToggleStatus = (medicine: Medicine) => {
-    try {
-      toggleMedicineStatus(medicine.id, medicine.isActive === 1 ? 0 : 1);
+  // ==================================================
+  // ACTIVATE / DEACTIVATE MEDICINE
+  // ==================================================
 
-      loadMedicines();
+  const handleToggleStatus = async (medicine: Medicine) => {
+    try {
+      if (medicine.isActive === 1) {
+        await cancelMedicineNotification(medicine.notificationId);
+
+        toggleMedicineStatus(medicine.id, 0);
+
+        updateMedicineNotificationId(medicine.id, null);
+
+        await loadMedicines(false);
+
+        Alert.alert(
+          "Medicine Deactivated",
+          "Medicine deactivated. Its daily notification has been cancelled.",
+        );
+      } else {
+        toggleMedicineStatus(medicine.id, 1);
+
+        if (canScheduleMedicine(medicine)) {
+          const notificationId = await scheduleDailyMedicineNotification(
+            medicine.name,
+            medicine.dosage,
+            medicine.reminderTime,
+          );
+
+          if (notificationId) {
+            updateMedicineNotificationId(medicine.id, notificationId);
+
+            await loadMedicines(false);
+
+            Alert.alert(
+              "Medicine Activated",
+              "Medicine activated and daily notification scheduled.",
+            );
+          } else {
+            await loadMedicines(false);
+
+            Alert.alert(
+              "Medicine Activated",
+              "Medicine activated, but notification could not be scheduled. Check notification permissions.",
+            );
+          }
+        } else {
+          await loadMedicines(false);
+
+          Alert.alert(
+            "Medicine Activated",
+            "Notification will be scheduled when you open LifeVault on or after its Start Date.",
+          );
+        }
+      }
     } catch (error) {
       console.log("Medicine status error:", error);
       Alert.alert("Error", "Unable to update medicine status.");
     }
   };
+
+  // ==================================================
+  // USER INTERFACE
+  // ==================================================
 
   return (
     <KeyboardAvoidingView
@@ -234,6 +431,7 @@ export default function MedicineScreen() {
           </Text>
 
           <Text style={styles.label}>Medicine Name *</Text>
+
           <TextInput
             style={styles.input}
             placeholder="Enter medicine name"
@@ -242,6 +440,7 @@ export default function MedicineScreen() {
           />
 
           <Text style={styles.label}>Dosage *</Text>
+
           <TextInput
             style={styles.input}
             placeholder="Enter prescribed dosage"
@@ -250,6 +449,7 @@ export default function MedicineScreen() {
           />
 
           <Text style={styles.label}>Instructions</Text>
+
           <TextInput
             style={[styles.input, styles.multilineInput]}
             placeholder="Enter doctor's or pharmacist's instructions"
@@ -259,6 +459,7 @@ export default function MedicineScreen() {
           />
 
           <Text style={styles.label}>Frequency *</Text>
+
           <TextInput
             style={styles.input}
             placeholder="Example: Once daily"
@@ -267,6 +468,7 @@ export default function MedicineScreen() {
           />
 
           <Text style={styles.label}>Reminder Time *</Text>
+
           <TextInput
             style={styles.input}
             placeholder="HH:MM (Example: 08:30)"
@@ -275,6 +477,7 @@ export default function MedicineScreen() {
           />
 
           <Text style={styles.label}>Start Date *</Text>
+
           <TextInput
             style={styles.input}
             placeholder="YYYY-MM-DD"
@@ -283,6 +486,7 @@ export default function MedicineScreen() {
           />
 
           <Text style={styles.label}>End Date (Optional)</Text>
+
           <TextInput
             style={styles.input}
             placeholder="YYYY-MM-DD"
@@ -352,6 +556,12 @@ export default function MedicineScreen() {
                 {medicine.isActive === 1 ? "Active" : "Inactive"}
               </Text>
 
+              <Text style={styles.notificationStatus}>
+                {medicine.isActive === 1 && medicine.notificationId
+                  ? "Daily notification scheduled"
+                  : "No active notification"}
+              </Text>
+
               <View style={styles.buttonRow}>
                 <TouchableOpacity
                   style={styles.editButton}
@@ -384,6 +594,10 @@ export default function MedicineScreen() {
   );
 }
 
+// ==================================================
+// STYLES
+// ==================================================
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -407,7 +621,7 @@ const styles = StyleSheet.create({
     color: "#777777",
     textAlign: "center",
     marginTop: 8,
-    marginBottom: 25,
+    marginBottom: 20,
   },
 
   form: {
@@ -458,7 +672,7 @@ const styles = StyleSheet.create({
 
   saveButtonText: {
     color: "#FFFFFF",
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "bold",
   },
 
@@ -519,7 +733,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "bold",
     marginTop: 8,
-    marginBottom: 12,
+    marginBottom: 5,
   },
 
   activeStatus: {
@@ -528,6 +742,12 @@ const styles = StyleSheet.create({
 
   inactiveStatus: {
     color: "#E67E22",
+  },
+
+  notificationStatus: {
+    fontSize: 12,
+    color: "#3498DB",
+    marginBottom: 12,
   },
 
   buttonRow: {
