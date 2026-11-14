@@ -52,6 +52,18 @@ export type Medicine = {
   createdAt: string;
 };
 
+// IMPORTANT DATE TYPE
+export type ImportantDate = {
+  id: number;
+  title: string;
+  description: string;
+  category: string;
+  eventDate: string;
+  notificationDaysBefore: number;
+  notificationId: string | null;
+  createdAt: string;
+};
+
 // --------------------------------------------------
 // DATABASE INITIALIZATION
 // --------------------------------------------------
@@ -107,6 +119,20 @@ export function initializeDatabase() {
       startDate TEXT NOT NULL,
       endDate TEXT,
       isActive INTEGER DEFAULT 1,
+      notificationId TEXT,
+      createdAt TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  // IMPORTANT DATES TABLE
+  db.execSync(`
+    CREATE TABLE IF NOT EXISTS important_dates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      description TEXT,
+      category TEXT NOT NULL,
+      eventDate TEXT NOT NULL,
+      notificationDaysBefore INTEGER DEFAULT 0,
       notificationId TEXT,
       createdAt TEXT DEFAULT CURRENT_TIMESTAMP
     );
@@ -466,4 +492,88 @@ export function updateMedicineNotificationId(
 // DELETE MEDICINE
 export function deleteMedicine(id: number) {
   return db.runSync("DELETE FROM medicines WHERE id = ?", id);
+}
+
+// ==================================================
+// IMPORTANT DATES FUNCTIONS
+// ==================================================
+
+// ADD IMPORTANT DATE
+export function addImportantDate(
+  title: string,
+  description: string,
+  category: string,
+  eventDate: string,
+  notificationDaysBefore: number,
+) {
+  return db.runSync(
+    `INSERT INTO important_dates
+     (
+       title,
+       description,
+       category,
+       eventDate,
+       notificationDaysBefore
+     )
+     VALUES (?, ?, ?, ?, ?)`,
+    title,
+    description,
+    category,
+    eventDate,
+    notificationDaysBefore,
+  );
+}
+
+// GET ALL IMPORTANT DATES
+export function getImportantDates(): ImportantDate[] {
+  return db.getAllSync<ImportantDate>(
+    `SELECT * FROM important_dates
+     ORDER BY eventDate ASC`,
+  );
+}
+
+// UPDATE IMPORTANT DATE
+export function updateImportantDate(
+  id: number,
+  title: string,
+  description: string,
+  category: string,
+  eventDate: string,
+  notificationDaysBefore: number,
+) {
+  return db.runSync(
+    `UPDATE important_dates
+     SET title = ?,
+         description = ?,
+         category = ?,
+         eventDate = ?,
+         notificationDaysBefore = ?,
+         notificationId = NULL
+     WHERE id = ?`,
+    title,
+    description,
+    category,
+    eventDate,
+    notificationDaysBefore,
+    id,
+  );
+}
+
+// UPDATE IMPORTANT DATE NOTIFICATION ID
+export function updateImportantDateNotificationId(
+  id: number,
+  notificationId: string | null,
+) {
+  return db.runSync(
+    `UPDATE important_dates
+     SET notificationId = ?
+     WHERE id = ?`,
+    notificationId,
+    id,
+  );
+}
+
+// DELETE IMPORTANT DATE
+export function deleteImportantDate(id: number) {
+  return db.runSync("DELETE FROM important_dates WHERE id = ?", id);
 }
