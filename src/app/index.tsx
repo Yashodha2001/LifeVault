@@ -126,6 +126,12 @@ export default function HomeScreen() {
       icon: "⏰",
       route: "/reminder",
     },
+    {
+      title: "Document & Media Vault",
+      description: "Store personal and professional files, photos and videos",
+      icon: "📁",
+      route: "/documents",
+    },
   ];
 
   // ==========================================
