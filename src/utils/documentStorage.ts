@@ -1,9 +1,9 @@
+import { Directory, File, Paths } from "expo-file-system";
 import * as FileSystem from "expo-file-system/legacy";
 
-// Folder where LifeVault stores uploaded files.
-const VAULT_DIRECTORY = `${FileSystem.documentDirectory}lifevault-vault/`;
+// LifeVault private storage folder
+const VAULT_DIRECTORY = new Directory(Paths.document, "lifevault-vault");
 
-// Information about a file selected from the phone.
 export type SelectedVaultFile = {
   uri: string;
   name: string;
@@ -11,55 +11,86 @@ export type SelectedVaultFile = {
   size?: number | null;
 };
 
-// Create the storage folder if it does not exist.
+// Create storage folder if it does not exist
 export const initializeVaultStorage = async (): Promise<void> => {
-  if (!FileSystem.documentDirectory) {
-    throw new Error("Phone document storage is unavailable.");
-  }
+  try {
+    if (!VAULT_DIRECTORY.exists) {
+      VAULT_DIRECTORY.create({
+        intermediates: true,
+        idempotent: true,
+      });
+    }
 
-  const folderInfo = await FileSystem.getInfoAsync(VAULT_DIRECTORY);
-
-  if (!folderInfo.exists) {
-    await FileSystem.makeDirectoryAsync(VAULT_DIRECTORY, {
-      intermediates: true,
-    });
+    console.log("LifeVault storage initialized:", VAULT_DIRECTORY.uri);
+  } catch (error) {
+    console.log("Storage initialization error:", error);
+    throw new Error("Unable to initialize LifeVault file storage.");
   }
 };
 
-// Copy a selected file into LifeVault storage.
+// Copy selected file into LifeVault
 export const saveFileToVault = async (
   file: SelectedVaultFile,
 ): Promise<string> => {
-  await initializeVaultStorage();
+  try {
+    await initializeVaultStorage();
 
-  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    if (!file.uri) {
+      throw new Error("Selected file URI is missing.");
+    }
 
-  const uniqueName = `${Date.now()}_${safeName}`;
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const uniqueName = `${Date.now()}_${safeName}`;
 
-  const destinationUri = `${VAULT_DIRECTORY}${uniqueName}`;
+    const destinationFile = new File(VAULT_DIRECTORY, uniqueName);
 
-  await FileSystem.copyAsync({
-    from: file.uri,
-    to: destinationUri,
-  });
+    console.log("Starting file copy...");
+    console.log("Source URI:", file.uri);
+    console.log("Destination URI:", destinationFile.uri);
 
-  return destinationUri;
-};
+    // Use the legacy copy operation for the selected Android URI
+    await FileSystem.copyAsync({
+      from: file.uri,
+      to: destinationFile.uri,
+    });
 
-// Delete a stored file.
-export const deleteFileFromVault = async (fileUri: string): Promise<void> => {
-  const fileInfo = await FileSystem.getInfoAsync(fileUri);
+    if (!destinationFile.exists) {
+      throw new Error("Copied file could not be verified.");
+    }
 
-  if (fileInfo.exists) {
-    await FileSystem.deleteAsync(fileUri);
+    console.log("File saved successfully:", destinationFile.uri);
+
+    return destinationFile.uri;
+  } catch (error) {
+    console.log("Save file storage error:", error);
+    throw error;
   }
 };
 
-// Check whether a stored file exists.
+// Delete a file from LifeVault
+export const deleteFileFromVault = async (fileUri: string): Promise<void> => {
+  try {
+    const file = new File(fileUri);
+
+    if (file.exists) {
+      file.delete();
+      console.log("File deleted:", fileUri);
+    }
+  } catch (error) {
+    console.log("Delete file error:", error);
+    throw new Error("Unable to delete the selected file.");
+  }
+};
+
+// Check whether a saved file exists
 export const checkVaultFileExists = async (
   fileUri: string,
 ): Promise<boolean> => {
-  const fileInfo = await FileSystem.getInfoAsync(fileUri);
-
-  return fileInfo.exists;
+  try {
+    const file = new File(fileUri);
+    return file.exists;
+  } catch (error) {
+    console.log("File check error:", error);
+    return false;
+  }
 };
