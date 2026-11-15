@@ -35,7 +35,12 @@
         }
       ],
       "expo-sqlite",
-      "expo-secure-store"
+      "expo-status-bar",
+      "expo-web-browser",
+      "expo-secure-store",
+      "expo-video",
+      "expo-audio",
+      "expo-sharing"
     ],
     "experiments": {
       "typedRoutes": true,
