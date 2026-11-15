@@ -16,7 +16,9 @@ import {
 
 import {
   addImportantDate,
+  deleteImportantDate,
   getImportantDates,
+  updateImportantDate,
   type ImportantDate,
 } from "../database/database";
 
@@ -27,6 +29,7 @@ export default function DatesScreen() {
   const [events, setEvents] = useState<ImportantDate[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
 
   // Form fields
   const [title, setTitle] = useState("");
@@ -75,6 +78,7 @@ export default function DatesScreen() {
 
   // CLEAR FORM
   const clearForm = () => {
+    setEditingId(null);
     setTitle("");
     setDescription("");
     setCategory("Birthday");
@@ -86,6 +90,42 @@ export default function DatesScreen() {
   const openAddForm = () => {
     clearForm();
     setShowForm(true);
+  };
+
+  // OPEN EDIT EVENT FORM
+  const openEditForm = (event: ImportantDate) => {
+    setEditingId(event.id);
+    setTitle(event.title);
+    setDescription(event.description ?? "");
+    setCategory(event.category);
+    setEventDate(event.eventDate);
+    setNotificationDays(String(event.notificationDaysBefore));
+    setShowForm(true);
+  };
+
+  // DELETE EVENT AFTER USER CONFIRMATION
+  const confirmDeleteEvent = (event: ImportantDate) => {
+    Alert.alert(
+      "Delete Important Date",
+      `Are you sure you want to delete "${event.title}"? This action cannot be undone.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => {
+            try {
+              deleteImportantDate(event.id);
+              loadEvents();
+              Alert.alert("Deleted", "The important date has been deleted.");
+            } catch (error) {
+              console.log("Delete important date error:", error);
+              Alert.alert("Error", "Unable to delete the important date.");
+            }
+          },
+        },
+      ],
+    );
   };
 
   // SAVE IMPORTANT DATE
@@ -122,27 +162,46 @@ export default function DatesScreen() {
       return;
     }
 
+    const wasEditing = editingId !== null;
+
     try {
-      addImportantDate(
-        cleanTitle,
-        cleanDescription,
-        category,
-        cleanDate,
-        daysBefore,
-      );
+      if (editingId !== null) {
+        updateImportantDate(
+          editingId,
+          cleanTitle,
+          cleanDescription,
+          category,
+          cleanDate,
+          daysBefore,
+        );
+      } else {
+        addImportantDate(
+          cleanTitle,
+          cleanDescription,
+          category,
+          cleanDate,
+          daysBefore,
+        );
+      }
 
       loadEvents();
-
       setShowForm(false);
       clearForm();
 
       Alert.alert(
         "Success",
-        "Your important date has been saved successfully!",
+        wasEditing
+          ? "Your important date has been updated successfully!"
+          : "Your important date has been saved successfully!",
       );
     } catch (error) {
       console.log("Save important date error:", error);
-      Alert.alert("Error", "Unable to save the important date.");
+      Alert.alert(
+        "Error",
+        wasEditing
+          ? "Unable to update the important date."
+          : "Unable to save the important date.",
+      );
     }
   };
 
@@ -196,6 +255,22 @@ export default function DatesScreen() {
               ? "No advance notification"
               : `${item.notificationDaysBefore} days before`}
           </Text>
+        </View>
+
+        <View style={styles.eventActionButtons}>
+          <TouchableOpacity
+            style={styles.editButton}
+            onPress={() => openEditForm(item)}
+          >
+            <Text style={styles.editButtonText}>✏️ Edit</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.deleteButton}
+            onPress={() => confirmDeleteEvent(item)}
+          >
+            <Text style={styles.deleteButtonText}>🗑️ Delete</Text>
+          </TouchableOpacity>
         </View>
       </View>
     );
@@ -277,7 +352,11 @@ export default function DatesScreen() {
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
           >
-            <Text style={styles.modalTitle}>Add Important Date</Text>
+            <Text style={styles.modalTitle}>
+              {editingId !== null
+                ? "Edit Important Date"
+                : "Add Important Date"}
+            </Text>
 
             {/* EVENT TITLE */}
             <Text style={styles.inputLabel}>Event Title *</Text>
@@ -373,7 +452,9 @@ export default function DatesScreen() {
                 style={styles.saveButton}
                 onPress={handleSaveEvent}
               >
-                <Text style={styles.saveButtonText}>Save Event</Text>
+                <Text style={styles.saveButtonText}>
+                  {editingId !== null ? "Update Event" : "Save Event"}
+                </Text>
               </TouchableOpacity>
             </View>
           </ScrollView>
@@ -522,6 +603,40 @@ const styles = StyleSheet.create({
   notificationInfo: {
     fontSize: 12,
     color: "#6C63FF",
+  },
+
+  eventActionButtons: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 16,
+  },
+
+  editButton: {
+    flex: 1,
+    backgroundColor: "#EAE8FF",
+    paddingVertical: 11,
+    borderRadius: 10,
+    alignItems: "center",
+  },
+
+  editButtonText: {
+    color: "#6C63FF",
+    fontWeight: "bold",
+    fontSize: 13,
+  },
+
+  deleteButton: {
+    flex: 1,
+    backgroundColor: "#FFECEC",
+    paddingVertical: 11,
+    borderRadius: 10,
+    alignItems: "center",
+  },
+
+  deleteButtonText: {
+    color: "#D93636",
+    fontWeight: "bold",
+    fontSize: 13,
   },
 
   emptyContainer: {
