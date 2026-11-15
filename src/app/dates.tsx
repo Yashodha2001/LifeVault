@@ -205,6 +205,37 @@ export default function DatesScreen() {
     }
   };
 
+  // CALCULATE THE COUNTDOWN FOR AN EVENT DATE
+  // Dates are compared at local midnight to avoid time-of-day differences.
+  const getCountdownText = (dateString: string) => {
+    const [year, month, day] = dateString.split("-").map(Number);
+    const eventDay = new Date(year, month - 1, day);
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const difference = eventDay.getTime() - today.getTime();
+    const daysRemaining = Math.round(difference / (1000 * 60 * 60 * 24));
+
+    if (daysRemaining === 0) {
+      return "🎉 Today!";
+    }
+
+    if (daysRemaining === 1) {
+      return "⏳ Tomorrow";
+    }
+
+    if (daysRemaining > 1) {
+      return `⏳ ${daysRemaining} days left`;
+    }
+
+    if (daysRemaining === -1) {
+      return "⌛ Yesterday";
+    }
+
+    return `⌛ ${Math.abs(daysRemaining)} days ago`;
+  };
+
   // EVENT CATEGORY ICON
   const getCategoryIcon = (eventCategory: string) => {
     switch (eventCategory) {
@@ -248,6 +279,10 @@ export default function DatesScreen() {
 
         <View style={styles.eventFooter}>
           <Text style={styles.eventDate}>📅 {item.eventDate}</Text>
+
+          <Text style={styles.countdownInfo}>
+            {getCountdownText(item.eventDate)}
+          </Text>
 
           <Text style={styles.notificationInfo}>
             🔔{" "}
@@ -597,6 +632,13 @@ const styles = StyleSheet.create({
   eventDate: {
     fontSize: 13,
     color: "#555555",
+    marginBottom: 7,
+  },
+
+  countdownInfo: {
+    fontSize: 14,
+    fontWeight: "bold",
+    color: "#2E8B57",
     marginBottom: 7,
   },
 
