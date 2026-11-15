@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-
 import {
   ActivityIndicator,
   Alert,
@@ -19,30 +18,33 @@ import {
   deleteImportantDate,
   getImportantDates,
   updateImportantDate,
+  updateImportantDateNotificationId,
   type ImportantDate,
 } from "../database/database";
 
-// Available event categories
+import {
+  cancelImportantDateNotification,
+  scheduleImportantDateNotification,
+} from "../utils/notifications";
+
 const CATEGORIES = ["Birthday", "Anniversary", "Exam", "Academic", "Other"];
 
 export default function DatesScreen() {
   const [events, setEvents] = useState<ImportantDate[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
 
-  // Form fields
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("Birthday");
   const [eventDate, setEventDate] = useState("");
   const [notificationDays, setNotificationDays] = useState("0");
 
-  // LOAD EVENTS FROM SQLITE
   const loadEvents = () => {
     try {
-      const savedEvents = getImportantDates();
-      setEvents(savedEvents);
+      setEvents(getImportantDates());
     } catch (error) {
       console.log("Load important dates error:", error);
       Alert.alert("Error", "Unable to load important dates.");
@@ -55,28 +57,20 @@ export default function DatesScreen() {
     loadEvents();
   }, []);
 
-  // VALIDATE DATE (YYYY-MM-DD)
   const isValidDate = (date: string) => {
     const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
-
-    if (!match) {
-      return false;
-    }
-
+    if (!match) return false;
     const year = Number(match[1]);
     const month = Number(match[2]);
     const day = Number(match[3]);
-
-    const parsedDate = new Date(year, month - 1, day);
-
+    const parsed = new Date(year, month - 1, day);
     return (
-      parsedDate.getFullYear() === year &&
-      parsedDate.getMonth() === month - 1 &&
-      parsedDate.getDate() === day
+      parsed.getFullYear() === year &&
+      parsed.getMonth() === month - 1 &&
+      parsed.getDate() === day
     );
   };
 
-  // CLEAR FORM
   const clearForm = () => {
     setEditingId(null);
     setTitle("");
@@ -86,13 +80,11 @@ export default function DatesScreen() {
     setNotificationDays("0");
   };
 
-  // OPEN ADD EVENT FORM
   const openAddForm = () => {
     clearForm();
     setShowForm(true);
   };
 
-  // OPEN EDIT EVENT FORM
   const openEditForm = (event: ImportantDate) => {
     setEditingId(event.id);
     setTitle(event.title);
@@ -103,8 +95,7 @@ export default function DatesScreen() {
     setShowForm(true);
   };
 
-  // DELETE EVENT AFTER USER CONFIRMATION
-  const confirmDeleteEvent = (event: ImportantDate) => {
+  const handleDeleteEvent = (event: ImportantDate) => {
     Alert.alert(
       "Delete Important Date",
       `Are you sure you want to delete "${event.title}"? This action cannot be undone.`,
@@ -113,11 +104,15 @@ export default function DatesScreen() {
         {
           text: "Delete",
           style: "destructive",
-          onPress: () => {
+          onPress: async () => {
             try {
+              await cancelImportantDateNotification(event.notificationId);
               deleteImportantDate(event.id);
               loadEvents();
-              Alert.alert("Deleted", "The important date has been deleted.");
+              Alert.alert(
+                "Deleted",
+                "The important date and its notification have been deleted.",
+              );
             } catch (error) {
               console.log("Delete important date error:", error);
               Alert.alert("Error", "Unable to delete the important date.");
@@ -128,8 +123,7 @@ export default function DatesScreen() {
     );
   };
 
-  // SAVE IMPORTANT DATE
-  const handleSaveEvent = () => {
+  const handleSaveEvent = async () => {
     const cleanTitle = title.trim();
     const cleanDescription = description.trim();
     const cleanDate = eventDate.trim();
@@ -138,12 +132,10 @@ export default function DatesScreen() {
       Alert.alert("Required", "Please enter an event title.");
       return;
     }
-
     if (!cleanDate) {
       Alert.alert("Required", "Please enter the event date.");
       return;
     }
-
     if (!isValidDate(cleanDate)) {
       Alert.alert(
         "Invalid Date",
@@ -153,8 +145,12 @@ export default function DatesScreen() {
     }
 
     const daysBefore = Number(notificationDays);
-
-    if (!Number.isInteger(daysBefore) || daysBefore < 0 || daysBefore > 30) {
+    if (
+      !/^\d+$/.test(notificationDays.trim()) ||
+      !Number.isInteger(daysBefore) ||
+      daysBefore < 0 ||
+      daysBefore > 30
+    ) {
       Alert.alert(
         "Invalid Notification Days",
         "Enter a whole number between 0 and 30.",
@@ -162,10 +158,20 @@ export default function DatesScreen() {
       return;
     }
 
+    if (saving) return;
+    setSaving(true);
     const wasEditing = editingId !== null;
 
     try {
+      let eventId: number;
+      let oldNotificationId: string | null = null;
+
       if (editingId !== null) {
+        const existingEvent = events.find((event) => event.id === editingId);
+        oldNotificationId = existingEvent?.notificationId ?? null;
+        // Cancel the previous scheduled notification before replacing the event.
+        await cancelImportantDateNotification(oldNotificationId);
+
         updateImportantDate(
           editingId,
           cleanTitle,
@@ -174,26 +180,49 @@ export default function DatesScreen() {
           cleanDate,
           daysBefore,
         );
+        eventId = editingId;
       } else {
-        addImportantDate(
+        const result = addImportantDate(
           cleanTitle,
           cleanDescription,
           category,
           cleanDate,
           daysBefore,
         );
+        eventId = Number(result.lastInsertRowId);
       }
 
+      // Schedule a new notification when the user selected 1-30 days.
+      // The helper returns null when daysBefore is 0 or the notification date is past.
+      const newNotificationId = await scheduleImportantDateNotification(
+        cleanTitle,
+        cleanDescription,
+        cleanDate,
+        daysBefore,
+      );
+
+      updateImportantDateNotificationId(eventId, newNotificationId);
       loadEvents();
       setShowForm(false);
       clearForm();
 
-      Alert.alert(
-        "Success",
-        wasEditing
-          ? "Your important date has been updated successfully!"
-          : "Your important date has been saved successfully!",
-      );
+      if (daysBefore > 0 && !newNotificationId) {
+        Alert.alert(
+          wasEditing ? "Event Updated" : "Event Saved",
+          "Your event was saved, but its notification was not scheduled. Check notification permission and make sure the selected reminder date is still in the future.",
+        );
+      } else {
+        Alert.alert(
+          "Success",
+          wasEditing
+            ? newNotificationId
+              ? "Your important date was updated and its notification was rescheduled."
+              : "Your important date was updated successfully. No advance notification is enabled."
+            : newNotificationId
+              ? "Your important date was saved and its notification was scheduled."
+              : "Your important date was saved successfully. No advance notification is enabled.",
+        );
+      }
     } catch (error) {
       console.log("Save important date error:", error);
       Alert.alert(
@@ -202,145 +231,113 @@ export default function DatesScreen() {
           ? "Unable to update the important date."
           : "Unable to save the important date.",
       );
+    } finally {
+      setSaving(false);
     }
   };
 
-  // CALCULATE THE COUNTDOWN FOR AN EVENT DATE
-  // Dates are compared at local midnight to avoid time-of-day differences.
   const getCountdownText = (dateString: string) => {
     const [year, month, day] = dateString.split("-").map(Number);
     const eventDay = new Date(year, month - 1, day);
-
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-
     const difference = eventDay.getTime() - today.getTime();
     const daysRemaining = Math.round(difference / (1000 * 60 * 60 * 24));
 
-    if (daysRemaining === 0) {
-      return "🎉 Today!";
-    }
-
-    if (daysRemaining === 1) {
-      return "⏳ Tomorrow";
-    }
-
-    if (daysRemaining > 1) {
-      return `⏳ ${daysRemaining} days left`;
-    }
-
-    if (daysRemaining === -1) {
-      return "⌛ Yesterday";
-    }
-
+    if (daysRemaining === 0) return "🎉 Today!";
+    if (daysRemaining === 1) return "⏳ Tomorrow";
+    if (daysRemaining > 1) return `⏳ ${daysRemaining} days left`;
+    if (daysRemaining === -1) return "⌛ Yesterday";
     return `⌛ ${Math.abs(daysRemaining)} days ago`;
   };
 
-  // EVENT CATEGORY ICON
   const getCategoryIcon = (eventCategory: string) => {
     switch (eventCategory) {
       case "Birthday":
         return "🎂";
-
       case "Anniversary":
         return "❤️";
-
       case "Exam":
         return "📝";
-
       case "Academic":
         return "🎓";
-
       default:
         return "📌";
     }
   };
 
-  // DISPLAY EVENT CARD
-  const renderEvent = ({ item }: { item: ImportantDate }) => {
-    return (
-      <View style={styles.eventCard}>
-        <View style={styles.eventHeader}>
-          <View style={styles.eventIcon}>
-            <Text style={styles.eventIconText}>
-              {getCategoryIcon(item.category)}
-            </Text>
-          </View>
-
-          <View style={styles.eventInfo}>
-            <Text style={styles.eventTitle}>{item.title}</Text>
-            <Text style={styles.eventCategory}>{item.category}</Text>
-          </View>
-        </View>
-
-        {item.description ? (
-          <Text style={styles.eventDescription}>{item.description}</Text>
-        ) : null}
-
-        <View style={styles.eventFooter}>
-          <Text style={styles.eventDate}>📅 {item.eventDate}</Text>
-
-          <Text style={styles.countdownInfo}>
-            {getCountdownText(item.eventDate)}
-          </Text>
-
-          <Text style={styles.notificationInfo}>
-            🔔{" "}
-            {item.notificationDaysBefore === 0
-              ? "No advance notification"
-              : `${item.notificationDaysBefore} days before`}
+  const renderEvent = ({ item }: { item: ImportantDate }) => (
+    <View style={styles.eventCard}>
+      <View style={styles.eventHeader}>
+        <View style={styles.eventIcon}>
+          <Text style={styles.eventIconText}>
+            {getCategoryIcon(item.category)}
           </Text>
         </View>
-
-        <View style={styles.eventActionButtons}>
-          <TouchableOpacity
-            style={styles.editButton}
-            onPress={() => openEditForm(item)}
-          >
-            <Text style={styles.editButtonText}>✏️ Edit</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.deleteButton}
-            onPress={() => confirmDeleteEvent(item)}
-          >
-            <Text style={styles.deleteButtonText}>🗑️ Delete</Text>
-          </TouchableOpacity>
+        <View style={styles.eventInfo}>
+          <Text style={styles.eventTitle}>{item.title}</Text>
+          <Text style={styles.eventCategory}>{item.category}</Text>
         </View>
       </View>
-    );
-  };
 
-  // MAIN SCREEN
+      {item.description ? (
+        <Text style={styles.eventDescription}>{item.description}</Text>
+      ) : null}
+
+      <View style={styles.eventFooter}>
+        <Text style={styles.eventDate}>📅 {item.eventDate}</Text>
+        <Text style={styles.countdownInfo}>
+          {getCountdownText(item.eventDate)}
+        </Text>
+        <Text style={styles.notificationInfo}>
+          🔔{" "}
+          {item.notificationDaysBefore === 0
+            ? "No advance notification"
+            : item.notificationId
+              ? `Notification scheduled ${item.notificationDaysBefore} days before`
+              : `${item.notificationDaysBefore} days before (not scheduled)`}
+        </Text>
+      </View>
+
+      <View style={styles.eventActionButtons}>
+        <TouchableOpacity
+          style={styles.editButton}
+          onPress={() => openEditForm(item)}
+        >
+          <Text style={styles.editButtonText}>✏️ Edit</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.deleteButton}
+          onPress={() => handleDeleteEvent(item)}
+        >
+          <Text style={styles.deleteButtonText}>🗑️ Delete</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
   return (
     <View style={styles.container}>
       {!showForm ? (
         <>
-          {/* HEADER */}
           <View style={styles.header}>
             <View>
               <Text style={styles.title}>Important Dates</Text>
-
               <Text style={styles.subtitle}>
                 Never forget important moments.
               </Text>
             </View>
-
             <View style={styles.countBox}>
               <Text style={styles.countNumber}>{events.length}</Text>
-
               <Text style={styles.countLabel}>Events</Text>
             </View>
           </View>
 
-          {/* ADD EVENT BUTTON */}
           <TouchableOpacity style={styles.addButton} onPress={openAddForm}>
             <Text style={styles.addButtonText}>+ Add Important Date</Text>
           </TouchableOpacity>
 
-          {/* EVENT LIST */}
           <Text style={styles.sectionTitle}>Your Saved Events</Text>
-
           {loading ? (
             <ActivityIndicator
               size="large"
@@ -357,9 +354,7 @@ export default function DatesScreen() {
               ListEmptyComponent={
                 <View style={styles.emptyContainer}>
                   <Text style={styles.emptyIcon}>📅</Text>
-
                   <Text style={styles.emptyTitle}>No Important Dates Yet</Text>
-
                   <Text style={styles.emptyDescription}>
                     Add birthdays, anniversaries, exams and other special
                     events.
@@ -368,13 +363,8 @@ export default function DatesScreen() {
               }
             />
           )}
-
-          {/* ADD EVENT MODAL */}
         </>
-      ) : null}
-
-      {/* INLINE ADD FORM - NO MODAL */}
-      {showForm ? (
+      ) : (
         <KeyboardAvoidingView
           style={styles.formScreen}
           behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -383,7 +373,7 @@ export default function DatesScreen() {
           <ScrollView
             style={styles.formScrollView}
             contentContainerStyle={styles.formScrollContent}
-            showsVerticalScrollIndicator={true}
+            showsVerticalScrollIndicator
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
           >
@@ -393,9 +383,7 @@ export default function DatesScreen() {
                 : "Add Important Date"}
             </Text>
 
-            {/* EVENT TITLE */}
             <Text style={styles.inputLabel}>Event Title *</Text>
-
             <TextInput
               style={styles.input}
               placeholder="e.g. Mother's Birthday"
@@ -405,9 +393,7 @@ export default function DatesScreen() {
               returnKeyType="next"
             />
 
-            {/* DESCRIPTION */}
             <Text style={styles.inputLabel}>Description</Text>
-
             <TextInput
               style={[styles.input, styles.descriptionInput]}
               placeholder="Enter event details..."
@@ -417,9 +403,7 @@ export default function DatesScreen() {
               maxLength={500}
             />
 
-            {/* CATEGORY */}
             <Text style={styles.inputLabel}>Event Category</Text>
-
             <View style={styles.categoryContainer}>
               {CATEGORIES.map((item) => (
                 <TouchableOpacity
@@ -442,9 +426,7 @@ export default function DatesScreen() {
               ))}
             </View>
 
-            {/* EVENT DATE */}
             <Text style={styles.inputLabel}>Event Date *</Text>
-
             <TextInput
               style={styles.input}
               placeholder="YYYY-MM-DD (e.g. 2026-12-25)"
@@ -454,9 +436,7 @@ export default function DatesScreen() {
               maxLength={10}
             />
 
-            {/* NOTIFICATION DAYS */}
             <Text style={styles.inputLabel}>Notify Before (Days)</Text>
-
             <TextInput
               style={styles.input}
               placeholder="0 = No advance notification"
@@ -465,16 +445,15 @@ export default function DatesScreen() {
               keyboardType="number-pad"
               maxLength={2}
             />
-
             <Text style={styles.helperText}>
-              Enter 0 to disable advance notification. You can select between 0
-              and 30 days.
+              Enter 0 to disable advance notification. Choose between 0 and 30
+              days. Notifications are scheduled for 9:00 AM.
             </Text>
 
-            {/* ACTION BUTTONS */}
             <View style={styles.modalButtons}>
               <TouchableOpacity
                 style={styles.cancelButton}
+                disabled={saving}
                 onPress={() => {
                   setShowForm(false);
                   clearForm();
@@ -482,24 +461,27 @@ export default function DatesScreen() {
               >
                 <Text style={styles.cancelButtonText}>Cancel</Text>
               </TouchableOpacity>
-
               <TouchableOpacity
-                style={styles.saveButton}
+                style={[styles.saveButton, saving && styles.disabledButton]}
                 onPress={handleSaveEvent}
+                disabled={saving}
               >
                 <Text style={styles.saveButtonText}>
-                  {editingId !== null ? "Update Event" : "Save Event"}
+                  {saving
+                    ? "Saving..."
+                    : editingId !== null
+                      ? "Update Event"
+                      : "Save Event"}
                 </Text>
               </TouchableOpacity>
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
-      ) : null}
+      )}
     </View>
   );
 }
 
-// STYLES
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -507,26 +489,14 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingTop: 60,
   },
-
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 25,
   },
-
-  title: {
-    fontSize: 25,
-    fontWeight: "bold",
-    color: "#6C63FF",
-  },
-
-  subtitle: {
-    color: "#777777",
-    marginTop: 8,
-    fontSize: 14,
-  },
-
+  title: { fontSize: 25, fontWeight: "bold", color: "#6C63FF" },
+  subtitle: { color: "#777777", marginTop: 8, fontSize: 14 },
   countBox: {
     backgroundColor: "#EAE8FF",
     paddingHorizontal: 18,
@@ -534,18 +504,8 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: "center",
   },
-
-  countNumber: {
-    fontSize: 22,
-    fontWeight: "bold",
-    color: "#6C63FF",
-  },
-
-  countLabel: {
-    fontSize: 11,
-    color: "#777777",
-  },
-
+  countNumber: { fontSize: 22, fontWeight: "bold", color: "#6C63FF" },
+  countLabel: { fontSize: 11, color: "#777777" },
   addButton: {
     backgroundColor: "#6C63FF",
     padding: 16,
@@ -553,25 +513,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 25,
   },
-
-  addButtonText: {
-    color: "#FFFFFF",
-    fontSize: 16,
-    fontWeight: "bold",
-  },
-
+  addButtonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "bold" },
   sectionTitle: {
     fontSize: 18,
     fontWeight: "bold",
     color: "#333333",
     marginBottom: 15,
   },
-
-  listContent: {
-    paddingBottom: 30,
-    flexGrow: 1,
-  },
-
+  listContent: { paddingBottom: 30, flexGrow: 1 },
   eventCard: {
     backgroundColor: "#FFFFFF",
     padding: 17,
@@ -579,12 +528,7 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     elevation: 2,
   },
-
-  eventHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-
+  eventHeader: { flexDirection: "row", alignItems: "center" },
   eventIcon: {
     width: 48,
     height: 48,
@@ -593,66 +537,31 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-
-  eventIconText: {
-    fontSize: 23,
-  },
-
-  eventInfo: {
-    marginLeft: 12,
-    flex: 1,
-  },
-
-  eventTitle: {
-    fontSize: 17,
-    fontWeight: "bold",
-    color: "#333333",
-  },
-
-  eventCategory: {
-    fontSize: 13,
-    color: "#777777",
-    marginTop: 4,
-  },
-
+  eventIconText: { fontSize: 23 },
+  eventInfo: { marginLeft: 12, flex: 1 },
+  eventTitle: { fontSize: 17, fontWeight: "bold", color: "#333333" },
+  eventCategory: { fontSize: 13, color: "#777777", marginTop: 4 },
   eventDescription: {
     fontSize: 14,
     color: "#666666",
     marginTop: 13,
     lineHeight: 21,
   },
-
   eventFooter: {
     marginTop: 15,
     paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: "#EEEEEE",
   },
-
-  eventDate: {
-    fontSize: 13,
-    color: "#555555",
-    marginBottom: 7,
-  },
-
+  eventDate: { fontSize: 13, color: "#555555", marginBottom: 7 },
   countdownInfo: {
     fontSize: 14,
     fontWeight: "bold",
     color: "#2E8B57",
     marginBottom: 7,
   },
-
-  notificationInfo: {
-    fontSize: 12,
-    color: "#6C63FF",
-  },
-
-  eventActionButtons: {
-    flexDirection: "row",
-    gap: 10,
-    marginTop: 16,
-  },
-
+  notificationInfo: { fontSize: 12, color: "#6C63FF" },
+  eventActionButtons: { flexDirection: "row", gap: 10, marginTop: 16 },
   editButton: {
     flex: 1,
     backgroundColor: "#EAE8FF",
@@ -660,13 +569,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: "center",
   },
-
-  editButtonText: {
-    color: "#6C63FF",
-    fontWeight: "bold",
-    fontSize: 13,
-  },
-
+  editButtonText: { color: "#6C63FF", fontWeight: "bold", fontSize: 13 },
   deleteButton: {
     flex: 1,
     backgroundColor: "#FFECEC",
@@ -674,30 +577,14 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: "center",
   },
-
-  deleteButtonText: {
-    color: "#D93636",
-    fontWeight: "bold",
-    fontSize: 13,
-  },
-
+  deleteButtonText: { color: "#D93636", fontWeight: "bold", fontSize: 13 },
   emptyContainer: {
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 65,
   },
-
-  emptyIcon: {
-    fontSize: 48,
-    marginBottom: 15,
-  },
-
-  emptyTitle: {
-    fontSize: 17,
-    fontWeight: "bold",
-    color: "#444444",
-  },
-
+  emptyIcon: { fontSize: 48, marginBottom: 15 },
+  emptyTitle: { fontSize: 17, fontWeight: "bold", color: "#444444" },
   emptyDescription: {
     fontSize: 13,
     color: "#888888",
@@ -705,12 +592,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
     lineHeight: 20,
   },
-
-  loader: {
-    marginTop: 40,
-  },
-
-  // INLINE FORM STYLES
+  loader: { marginTop: 40 },
   formScreen: {
     flex: 1,
     width: "100%",
@@ -718,24 +600,14 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     overflow: "hidden",
   },
-
-  formScrollView: {
-    flex: 1,
-  },
-
-  formScrollContent: {
-    flexGrow: 1,
-    padding: 20,
-    paddingBottom: 40,
-  },
-
+  formScrollView: { flex: 1 },
+  formScrollContent: { flexGrow: 1, padding: 20, paddingBottom: 40 },
   modalTitle: {
     fontSize: 22,
     fontWeight: "bold",
     color: "#6C63FF",
     marginBottom: 20,
   },
-
   inputLabel: {
     fontSize: 14,
     fontWeight: "600",
@@ -743,7 +615,6 @@ const styles = StyleSheet.create({
     marginBottom: 7,
     marginTop: 10,
   },
-
   input: {
     backgroundColor: "#F5F5FA",
     borderWidth: 1,
@@ -753,18 +624,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#333333",
   },
-
-  descriptionInput: {
-    height: 75,
-    textAlignVertical: "top",
-  },
-
-  categoryContainer: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-
+  descriptionInput: { height: 75, textAlignVertical: "top" },
+  categoryContainer: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   categoryButton: {
     paddingHorizontal: 12,
     paddingVertical: 9,
@@ -773,35 +634,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#E5E5EF",
   },
-
-  selectedCategory: {
-    backgroundColor: "#6C63FF",
-    borderColor: "#6C63FF",
-  },
-
-  categoryText: {
-    fontSize: 12,
-    color: "#555555",
-  },
-
-  selectedCategoryText: {
-    color: "#FFFFFF",
-    fontWeight: "bold",
-  },
-
-  helperText: {
-    fontSize: 11,
-    color: "#888888",
-    marginTop: 7,
-    lineHeight: 16,
-  },
-
-  modalButtons: {
-    flexDirection: "row",
-    gap: 10,
-    marginTop: 25,
-  },
-
+  selectedCategory: { backgroundColor: "#6C63FF", borderColor: "#6C63FF" },
+  categoryText: { fontSize: 12, color: "#555555" },
+  selectedCategoryText: { color: "#FFFFFF", fontWeight: "bold" },
+  helperText: { fontSize: 11, color: "#888888", marginTop: 7, lineHeight: 16 },
+  modalButtons: { flexDirection: "row", gap: 10, marginTop: 25 },
   cancelButton: {
     flex: 1,
     backgroundColor: "#EEEEF5",
@@ -809,12 +646,7 @@ const styles = StyleSheet.create({
     borderRadius: 11,
     alignItems: "center",
   },
-
-  cancelButtonText: {
-    color: "#555555",
-    fontWeight: "bold",
-  },
-
+  cancelButtonText: { color: "#555555", fontWeight: "bold" },
   saveButton: {
     flex: 1,
     backgroundColor: "#6C63FF",
@@ -822,9 +654,6 @@ const styles = StyleSheet.create({
     borderRadius: 11,
     alignItems: "center",
   },
-
-  saveButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "bold",
-  },
+  saveButtonText: { color: "#FFFFFF", fontWeight: "bold" },
+  disabledButton: { opacity: 0.6 },
 });
