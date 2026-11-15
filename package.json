@@ -4,6 +4,7 @@
   "main": "expo-router/entry",
   "dependencies": {
     "@expo/ui": "~58.0.28",
+    "@noble/hashes": "^2.4.0",
     "expo": "~58.0.25",
     "expo-audio": "~58.0.12",
     "expo-constants": "~58.0.15",

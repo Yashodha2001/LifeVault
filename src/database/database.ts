@@ -147,7 +147,6 @@ export function initializeDatabase() {
       createdAt TEXT DEFAULT CURRENT_TIMESTAMP
     );
   `);
-
   // ASSIGNMENTS TABLE
   db.execSync(`
     CREATE TABLE IF NOT EXISTS assignments (
@@ -546,7 +545,8 @@ export function updateImportantDate(
          description = ?,
          category = ?,
          eventDate = ?,
-         notificationDaysBefore = ?
+         notificationDaysBefore = ?,
+         notificationId = NULL
      WHERE id = ?`,
     title,
     description,
