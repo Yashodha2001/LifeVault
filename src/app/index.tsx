@@ -9,232 +9,292 @@ import {
 } from "react-native";
 
 import { useFocusEffect, useRouter } from "expo-router";
-import { db } from "../database/database";
 
-// TypeScript type for reminder records
-type Reminder = {
-  id: number;
-  title: string;
-  description: string;
-  reminderDateTime: string;
-  isCompleted: number;
-};
+import {
+  getNotes,
+  getReminders,
+  type Note,
+  type Reminder,
+} from "../database/database";
 
 export default function HomeScreen() {
   const router = useRouter();
 
-  // Dashboard statistics
-  const [totalNotes, setTotalNotes] = useState(0);
-  const [totalReminders, setTotalReminders] = useState(0);
-  const [pendingReminders, setPendingReminders] = useState(0);
-  const [completedReminders, setCompletedReminders] = useState(0);
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [reminders, setReminders] = useState<Reminder[]>([]);
 
-  // Upcoming reminder list
-  const [upcomingReminders, setUpcomingReminders] = useState<Reminder[]>([]);
+  // ==========================================
+  // LOAD DASHBOARD DATA
+  // ==========================================
 
-  // Load dashboard information from SQLite
   const loadDashboardData = () => {
     try {
-      // Get total number of notes
-      const notesResult = db.getFirstSync<{ total: number }>(
-        "SELECT COUNT(*) AS total FROM notes",
-      );
+      const savedNotes = getNotes();
+      const savedReminders = getReminders();
 
-      setTotalNotes(notesResult?.total ?? 0);
-
-      // Get total number of reminders
-      const remindersResult = db.getFirstSync<{ total: number }>(
-        "SELECT COUNT(*) AS total FROM reminders",
-      );
-
-      setTotalReminders(remindersResult?.total ?? 0);
-
-      // Get pending reminders
-      const pendingResult = db.getFirstSync<{ total: number }>(
-        "SELECT COUNT(*) AS total FROM reminders WHERE isCompleted = 0",
-      );
-
-      setPendingReminders(pendingResult?.total ?? 0);
-
-      // Get completed reminders
-      const completedResult = db.getFirstSync<{ total: number }>(
-        "SELECT COUNT(*) AS total FROM reminders WHERE isCompleted = 1",
-      );
-
-      setCompletedReminders(completedResult?.total ?? 0);
-
-      // Get reminders that are not completed
-      const allPending = db.getAllSync<Reminder>(
-        "SELECT id, title, description, reminderDateTime, isCompleted FROM reminders WHERE isCompleted = 0",
-      );
-
-      // Convert stored date strings into JavaScript Date objects
-      const now = new Date();
-
-      const upcoming = allPending
-        .filter((reminder) => {
-          const reminderDate = new Date(
-            reminder.reminderDateTime.replace(" ", "T"),
-          );
-
-          return !isNaN(reminderDate.getTime()) && reminderDate >= now;
-        })
-        .sort((a, b) => {
-          return (
-            new Date(a.reminderDateTime.replace(" ", "T")).getTime() -
-            new Date(b.reminderDateTime.replace(" ", "T")).getTime()
-          );
-        })
-        .slice(0, 3);
-
-      setUpcomingReminders(upcoming);
+      setNotes(savedNotes);
+      setReminders(savedReminders);
     } catch (error) {
-      console.error("Dashboard loading error:", error);
+      console.log("Dashboard loading error:", error);
     }
   };
 
-  // Refresh dashboard whenever this screen becomes active
+  // Refresh dashboard whenever the screen gets focus
   useFocusEffect(
     useCallback(() => {
       loadDashboardData();
     }, []),
   );
 
-  // Format reminder date and time
-  const formatReminderDate = (dateTime: string) => {
-    const date = new Date(dateTime.replace(" ", "T"));
+  // ==========================================
+  // DASHBOARD STATISTICS
+  // ==========================================
 
-    if (isNaN(date.getTime())) {
-      return dateTime;
+  const totalNotes = notes.length;
+
+  const totalReminders = reminders.length;
+
+  const pendingReminders = reminders.filter(
+    (item) => item.isCompleted === 0,
+  ).length;
+
+  const completedReminders = reminders.filter(
+    (item) => item.isCompleted === 1,
+  ).length;
+
+  // ==========================================
+  // UPCOMING REMINDERS
+  // ==========================================
+
+  const upcomingReminders = reminders
+    .filter((item) => {
+      if (item.isCompleted === 1) {
+        return false;
+      }
+
+      const reminderDate = new Date(item.reminderDateTime.replace(" ", "T"));
+
+      return (
+        !Number.isNaN(reminderDate.getTime()) && reminderDate >= new Date()
+      );
+    })
+    .sort(
+      (a, b) =>
+        new Date(a.reminderDateTime.replace(" ", "T")).getTime() -
+        new Date(b.reminderDateTime.replace(" ", "T")).getTime(),
+    )
+    .slice(0, 3);
+
+  // ==========================================
+  // MODULE INFORMATION
+  // ==========================================
+
+  const modules = [
+    {
+      title: "Password Vault",
+      description: "Securely manage your passwords",
+      icon: "🔐",
+      route: "/password",
+    },
+    {
+      title: "Medicine Manager",
+      description: "Manage medicines and daily doses",
+      icon: "💊",
+      route: "/medicine",
+    },
+    {
+      title: "Important Dates",
+      description: "Remember your special dates",
+      icon: "📅",
+      route: "/dates",
+    },
+    {
+      title: "Assignment Manager",
+      description: "Organize assignments and deadlines",
+      icon: "🎓",
+      route: "/assignment",
+    },
+    {
+      title: "Notes & Memories",
+      description: "Save your important memories",
+      icon: "📝",
+      route: "/notes",
+    },
+    {
+      title: "Reminders",
+      description: "Manage your daily activities",
+      icon: "⏰",
+      route: "/reminder",
+    },
+  ];
+
+  // ==========================================
+  // FORMAT REMINDER DATE
+  // ==========================================
+
+  const formatReminderDate = (dateValue: string) => {
+    const date = new Date(dateValue.replace(" ", "T"));
+
+    if (Number.isNaN(date.getTime())) {
+      return dateValue;
     }
 
-    return date.toLocaleString();
+    return date.toLocaleString([], {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   };
 
+  // ==========================================
+  // DASHBOARD UI
+  // ==========================================
+
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* Dashboard heading */}
-      <Text style={styles.heading}>LifeVault</Text>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.content}
+      showsVerticalScrollIndicator={false}
+    >
+      {/* HEADER */}
 
-      <Text style={styles.welcome}>Welcome back!</Text>
+      <View style={styles.header}>
+        <Text style={styles.logo}>🔐 LifeVault</Text>
 
-      <Text style={styles.subtitle}>Organize your life in one place.</Text>
+        <Text style={styles.welcome}>Welcome to LifeVault!</Text>
 
-      {/* Statistics section */}
+        <Text style={styles.subtitle}>
+          Your personal space to organize your digital life, memories, medicines
+          and important activities.
+        </Text>
+      </View>
+
+      {/* STATISTICS */}
+
       <Text style={styles.sectionTitle}>Your Overview</Text>
 
-      <View style={styles.statsGrid}>
+      <View style={styles.statsContainer}>
         <View style={styles.statCard}>
           <Text style={styles.statIcon}>📝</Text>
+
           <Text style={styles.statNumber}>{totalNotes}</Text>
+
           <Text style={styles.statLabel}>Total Notes</Text>
         </View>
 
         <View style={styles.statCard}>
           <Text style={styles.statIcon}>⏰</Text>
+
           <Text style={styles.statNumber}>{totalReminders}</Text>
+
           <Text style={styles.statLabel}>Total Reminders</Text>
         </View>
 
         <View style={styles.statCard}>
-          <Text style={styles.statIcon}>📌</Text>
+          <Text style={styles.statIcon}>⌛</Text>
+
           <Text style={styles.statNumber}>{pendingReminders}</Text>
+
           <Text style={styles.statLabel}>Pending</Text>
         </View>
 
         <View style={styles.statCard}>
           <Text style={styles.statIcon}>✅</Text>
+
           <Text style={styles.statNumber}>{completedReminders}</Text>
+
           <Text style={styles.statLabel}>Completed</Text>
         </View>
       </View>
 
-      {/* Upcoming reminders section */}
+      {/* UPCOMING REMINDERS */}
+
       <View style={styles.upcomingHeader}>
         <Text style={styles.sectionTitle}>Upcoming Reminders</Text>
 
-        <TouchableOpacity onPress={() => router.navigate("/reminder")}>
+        <TouchableOpacity onPress={() => router.push("/reminder")}>
           <Text style={styles.viewAll}>View All</Text>
         </TouchableOpacity>
       </View>
 
       {upcomingReminders.length === 0 ? (
-        <View style={styles.emptyCard}>
-          <Text style={styles.emptyText}>No upcoming reminders.</Text>
+        <View style={styles.emptyReminderCard}>
+          <Text style={styles.emptyIcon}>📭</Text>
+
+          <Text style={styles.emptyTitle}>No upcoming reminders</Text>
+
+          <Text style={styles.emptyDescription}>
+            Your upcoming reminders will appear here.
+          </Text>
         </View>
       ) : (
-        upcomingReminders.map((reminder) => (
-          <View key={reminder.id} style={styles.reminderCard}>
-            <Text style={styles.reminderTitle}>⏰ {reminder.title}</Text>
+        upcomingReminders.map((item) => (
+          <View key={item.id} style={styles.reminderCard}>
+            <View style={styles.reminderIconContainer}>
+              <Text style={styles.reminderIcon}>⏰</Text>
+            </View>
 
-            <Text style={styles.reminderDate}>
-              {formatReminderDate(reminder.reminderDateTime)}
-            </Text>
+            <View style={styles.reminderDetails}>
+              <Text style={styles.reminderTitle}>{item.title}</Text>
+
+              <Text style={styles.reminderDate}>
+                {formatReminderDate(item.reminderDateTime)}
+              </Text>
+
+              {item.category ? (
+                <Text style={styles.reminderCategory}>{item.category}</Text>
+              ) : null}
+            </View>
           </View>
         ))
       )}
 
-      {/* Existing modules */}
+      {/* MODULES */}
+
       <Text style={styles.sectionTitle}>Your Modules</Text>
 
-      <View style={styles.grid}>
-        <TouchableOpacity
-          style={styles.card}
-          onPress={() => router.navigate("/password")}
-        >
-          <Text style={styles.icon}>🔐</Text>
-          <Text style={styles.cardTitle}>Password Vault</Text>
-        </TouchableOpacity>
+      <View style={styles.moduleContainer}>
+        {modules.map((item) => (
+          <TouchableOpacity
+            key={item.route}
+            style={styles.moduleCard}
+            activeOpacity={0.75}
+            onPress={() => router.push(item.route as any)}
+          >
+            <Text style={styles.moduleIcon}>{item.icon}</Text>
 
-        <TouchableOpacity
-          style={styles.card}
-          onPress={() => router.navigate("/medicine")}
-        >
-          <Text style={styles.icon}>💊</Text>
-          <Text style={styles.cardTitle}>Medicine Manager</Text>
-        </TouchableOpacity>
+            <Text style={styles.moduleTitle}>{item.title}</Text>
 
-        <TouchableOpacity
-          style={styles.card}
-          onPress={() => router.navigate("/dates")}
-        >
-          <Text style={styles.icon}>📅</Text>
-          <Text style={styles.cardTitle}>Important Dates</Text>
-        </TouchableOpacity>
+            <Text style={styles.moduleDescription}>{item.description}</Text>
 
-        <TouchableOpacity
-          style={styles.card}
-          onPress={() => router.navigate("/assignment")}
-        >
-          <Text style={styles.icon}>🎓</Text>
-          <Text style={styles.cardTitle}>Assignments</Text>
-        </TouchableOpacity>
+            <Text style={styles.openModule}>Open Module →</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
 
-        <TouchableOpacity
-          style={styles.card}
-          onPress={() => router.navigate("/notes")}
-        >
-          <Text style={styles.icon}>📝</Text>
-          <Text style={styles.cardTitle}>Notes & Memories</Text>
-        </TouchableOpacity>
+      {/* FOOTER */}
 
-        <TouchableOpacity
-          style={styles.card}
-          onPress={() => router.navigate("/reminder")}
-        >
-          <Text style={styles.icon}>⏰</Text>
-          <Text style={styles.cardTitle}>Reminders</Text>
-        </TouchableOpacity>
+      <View style={styles.footer}>
+        <Text style={styles.footerText}>LifeVault – Your Life, Organized.</Text>
+
+        <Text style={styles.footerSubText}>
+          Manage today. Remember tomorrow.
+        </Text>
       </View>
     </ScrollView>
   );
 }
 
-// Dashboard styles
+// ==========================================
+// STYLES
+// ==========================================
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "#F8F8FC",
   },
 
   content: {
@@ -242,127 +302,227 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
 
-  heading: {
-    fontSize: 28,
+  header: {
+    backgroundColor: "#6C63FF",
+    borderRadius: 20,
+    padding: 22,
+    marginTop: 20,
+    marginBottom: 25,
+  },
+
+  logo: {
+    color: "#FFFFFF",
+    fontSize: 24,
     fontWeight: "bold",
-    color: "#6C63FF",
-    marginTop: 30,
+    marginBottom: 20,
   },
 
   welcome: {
-    fontSize: 22,
+    color: "#FFFFFF",
+    fontSize: 25,
     fontWeight: "bold",
-    marginTop: 20,
+    marginBottom: 10,
   },
 
   subtitle: {
-    color: "#777777",
-    marginTop: 5,
+    color: "#F0EFFF",
+    fontSize: 14,
+    lineHeight: 22,
   },
 
   sectionTitle: {
     fontSize: 20,
     fontWeight: "bold",
-    marginTop: 30,
+    color: "#252544",
     marginBottom: 15,
+    marginTop: 5,
   },
 
-  statsGrid: {
+  // Statistics
+
+  statsContainer: {
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "space-between",
+    marginBottom: 25,
   },
 
   statCard: {
     width: "48%",
-    backgroundColor: "#F0EFFF",
-    padding: 18,
+    backgroundColor: "#FFFFFF",
     borderRadius: 15,
+    padding: 16,
     marginBottom: 12,
     alignItems: "center",
+    elevation: 2,
   },
 
   statIcon: {
-    fontSize: 27,
+    fontSize: 25,
     marginBottom: 8,
   },
 
   statNumber: {
-    fontSize: 25,
+    fontSize: 26,
     fontWeight: "bold",
     color: "#6C63FF",
   },
 
   statLabel: {
-    fontSize: 14,
-    color: "#555555",
+    fontSize: 13,
+    color: "#777",
     marginTop: 5,
   },
+
+  // Upcoming reminders
 
   upcomingHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    marginBottom: 10,
   },
 
   viewAll: {
     color: "#6C63FF",
     fontWeight: "bold",
-    marginTop: 15,
+    fontSize: 13,
+    marginBottom: 10,
   },
 
-  emptyCard: {
-    backgroundColor: "#F7F7FC",
-    padding: 18,
-    borderRadius: 12,
+  emptyReminderCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 15,
+    padding: 22,
+    alignItems: "center",
+    marginBottom: 25,
   },
 
-  emptyText: {
-    color: "#777777",
+  emptyIcon: {
+    fontSize: 30,
+    marginBottom: 8,
+  },
+
+  emptyTitle: {
+    fontSize: 15,
+    fontWeight: "bold",
+    color: "#333",
+  },
+
+  emptyDescription: {
+    fontSize: 12,
+    color: "#888",
+    marginTop: 6,
     textAlign: "center",
   },
 
   reminderCard: {
-    backgroundColor: "#F7F7FC",
-    padding: 15,
-    borderRadius: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 13,
+    padding: 14,
     marginBottom: 10,
-    borderLeftWidth: 4,
-    borderLeftColor: "#6C63FF",
+    elevation: 1,
+  },
+
+  reminderIconContainer: {
+    width: 45,
+    height: 45,
+    borderRadius: 12,
+    backgroundColor: "#F0EFFF",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
+  },
+
+  reminderIcon: {
+    fontSize: 22,
+  },
+
+  reminderDetails: {
+    flex: 1,
   },
 
   reminderTitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "bold",
+    color: "#333",
   },
 
   reminderDate: {
-    fontSize: 13,
-    color: "#777777",
-    marginTop: 7,
+    fontSize: 12,
+    color: "#6C63FF",
+    marginTop: 5,
   },
 
-  grid: {
+  reminderCategory: {
+    fontSize: 11,
+    color: "#888",
+    marginTop: 4,
+  },
+
+  // Module cards
+
+  moduleContainer: {
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "space-between",
   },
 
-  card: {
+  moduleCard: {
     width: "48%",
-    backgroundColor: "#F0EFFF",
-    padding: 20,
-    borderRadius: 15,
-    marginBottom: 15,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    padding: 15,
+    marginBottom: 14,
+    minHeight: 175,
+    elevation: 2,
   },
 
-  icon: {
+  moduleIcon: {
     fontSize: 30,
-    marginBottom: 10,
+    marginBottom: 12,
   },
 
-  cardTitle: {
+  moduleTitle: {
     fontSize: 15,
-    fontWeight: "600",
+    fontWeight: "bold",
+    color: "#252544",
+    marginBottom: 7,
+  },
+
+  moduleDescription: {
+    fontSize: 12,
+    color: "#777",
+    lineHeight: 18,
+    flex: 1,
+  },
+
+  openModule: {
+    fontSize: 12,
+    fontWeight: "bold",
+    color: "#6C63FF",
+    marginTop: 12,
+  },
+
+  // Footer
+
+  footer: {
+    alignItems: "center",
+    marginTop: 20,
+    paddingVertical: 20,
+  },
+
+  footerText: {
+    fontSize: 14,
+    fontWeight: "bold",
+    color: "#6C63FF",
+  },
+
+  footerSubText: {
+    fontSize: 12,
+    color: "#999",
+    marginTop: 5,
   },
 });

@@ -1,15 +1,15 @@
 import * as SecureStore from "expo-secure-store";
 import * as SQLite from "expo-sqlite";
 
-// --------------------------------------------------
+// ==================================================
 // DATABASE CONNECTION
-// --------------------------------------------------
+// ==================================================
 
 export const db = SQLite.openDatabaseSync("lifevault.db");
 
-// --------------------------------------------------
+// ==================================================
 // TYPES
-// --------------------------------------------------
+// ==================================================
 
 export type Note = {
   id: number;
@@ -52,9 +52,31 @@ export type Medicine = {
   createdAt: string;
 };
 
-// --------------------------------------------------
+export type ImportantDate = {
+  id: number;
+  title: string;
+  description: string;
+  category: string;
+  eventDate: string;
+  notificationDaysBefore: number;
+  notificationId: string | null;
+  createdAt: string;
+};
+
+export type Assignment = {
+  id: number;
+  title: string;
+  subject: string;
+  description: string;
+  dueDate: string;
+  priority: "Low" | "Medium" | "High";
+  isCompleted: number;
+  createdAt: string;
+};
+
+// ==================================================
 // DATABASE INITIALIZATION
-// --------------------------------------------------
+// ==================================================
 
 export function initializeDatabase() {
   console.log("Starting database initialization...");
@@ -112,47 +134,84 @@ export function initializeDatabase() {
     );
   `);
 
-  // ------------------------------------------------
-  // DATABASE MIGRATIONS
-  // ------------------------------------------------
+  // IMPORTANT DATES TABLE
+  db.execSync(`
+    CREATE TABLE IF NOT EXISTS important_dates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      description TEXT,
+      category TEXT,
+      eventDate TEXT NOT NULL,
+      notificationDaysBefore INTEGER DEFAULT 0,
+      notificationId TEXT,
+      createdAt TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
 
-  // NOTES: Add isFavorite column if missing
+  // ASSIGNMENTS TABLE
+  db.execSync(`
+    CREATE TABLE IF NOT EXISTS assignments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      dueDate TEXT NOT NULL,
+      priority TEXT DEFAULT 'Medium',
+      isCompleted INTEGER DEFAULT 0,
+      createdAt TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  // --------------------------------------------------
+  // DATABASE MIGRATIONS
+  // --------------------------------------------------
+
+  // NOTES: Add isFavorite if missing
   const noteColumns = db.getAllSync<{ name: string }>(
     "PRAGMA table_info(notes)",
   );
 
-  const hasFavorite = noteColumns.some(
-    (column) => column.name === "isFavorite",
-  );
-
-  if (!hasFavorite) {
+  if (!noteColumns.some((column) => column.name === "isFavorite")) {
     db.execSync("ALTER TABLE notes ADD COLUMN isFavorite INTEGER DEFAULT 0");
   }
 
-  // REMINDERS: Add notificationId column if missing
+  // REMINDERS: Add notificationId if missing
   const reminderColumns = db.getAllSync<{ name: string }>(
     "PRAGMA table_info(reminders)",
   );
 
-  const hasReminderNotificationId = reminderColumns.some(
-    (column) => column.name === "notificationId",
-  );
-
-  if (!hasReminderNotificationId) {
+  if (!reminderColumns.some((column) => column.name === "notificationId")) {
     db.execSync("ALTER TABLE reminders ADD COLUMN notificationId TEXT");
   }
 
-  // MEDICINES: Add notificationId column if missing
+  // MEDICINES: Add notificationId if missing
   const medicineColumns = db.getAllSync<{ name: string }>(
     "PRAGMA table_info(medicines)",
   );
 
-  const hasMedicineNotificationId = medicineColumns.some(
-    (column) => column.name === "notificationId",
+  if (!medicineColumns.some((column) => column.name === "notificationId")) {
+    db.execSync("ALTER TABLE medicines ADD COLUMN notificationId TEXT");
+  }
+
+  // IMPORTANT DATES: Add notification columns if missing
+  const importantDateColumns = db.getAllSync<{ name: string }>(
+    "PRAGMA table_info(important_dates)",
   );
 
-  if (!hasMedicineNotificationId) {
-    db.execSync("ALTER TABLE medicines ADD COLUMN notificationId TEXT");
+  if (
+    !importantDateColumns.some(
+      (column) => column.name === "notificationDaysBefore",
+    )
+  ) {
+    db.execSync(
+      "ALTER TABLE important_dates ADD COLUMN notificationDaysBefore INTEGER DEFAULT 0",
+    );
+  }
+
+  if (
+    !importantDateColumns.some((column) => column.name === "notificationId")
+  ) {
+    db.execSync("ALTER TABLE important_dates ADD COLUMN notificationId TEXT");
   }
 
   console.log("LifeVault database initialized successfully!");
@@ -163,7 +222,6 @@ export function initializeDatabase() {
 // NOTES FUNCTIONS
 // ==================================================
 
-// ADD NOTE
 export function addNote(title: string, content: string, category: string) {
   return db.runSync(
     `INSERT INTO notes (title, content, category)
@@ -174,12 +232,10 @@ export function addNote(title: string, content: string, category: string) {
   );
 }
 
-// GET ALL NOTES
 export function getNotes(): Note[] {
   return db.getAllSync<Note>("SELECT * FROM notes ORDER BY createdAt DESC");
 }
 
-// UPDATE NOTE
 export function updateNote(
   id: number,
   title: string,
@@ -197,7 +253,6 @@ export function updateNote(
   );
 }
 
-// TOGGLE NOTE FAVOURITE
 export function toggleFavorite(id: number, isFavorite: number) {
   return db.runSync(
     "UPDATE notes SET isFavorite = ? WHERE id = ?",
@@ -206,7 +261,6 @@ export function toggleFavorite(id: number, isFavorite: number) {
   );
 }
 
-// DELETE NOTE
 export function deleteNote(id: number) {
   return db.runSync("DELETE FROM notes WHERE id = ?", id);
 }
@@ -215,7 +269,6 @@ export function deleteNote(id: number) {
 // REMINDER FUNCTIONS
 // ==================================================
 
-// ADD REMINDER
 export function addReminder(
   title: string,
   description: string,
@@ -235,14 +288,12 @@ export function addReminder(
   );
 }
 
-// GET ALL REMINDERS
 export function getReminders(): Reminder[] {
   return db.getAllSync<Reminder>(
     "SELECT * FROM reminders ORDER BY reminderDateTime ASC",
   );
 }
 
-// UPDATE REMINDER
 export function updateReminder(
   id: number,
   title: string,
@@ -268,7 +319,6 @@ export function updateReminder(
   );
 }
 
-// TOGGLE REMINDER COMPLETED
 export function toggleReminderCompleted(id: number, isCompleted: number) {
   return db.runSync(
     "UPDATE reminders SET isCompleted = ? WHERE id = ?",
@@ -277,7 +327,6 @@ export function toggleReminderCompleted(id: number, isCompleted: number) {
   );
 }
 
-// UPDATE REMINDER NOTIFICATION ID
 export function updateReminderNotificationId(
   id: number,
   notificationId: string | null,
@@ -289,7 +338,6 @@ export function updateReminderNotificationId(
   );
 }
 
-// DELETE REMINDER
 export function deleteReminder(id: number) {
   return db.runSync("DELETE FROM reminders WHERE id = ?", id);
 }
@@ -298,8 +346,7 @@ export function deleteReminder(id: number) {
 // PASSWORD VAULT FUNCTIONS
 // ==================================================
 
-// ADD PASSWORD
-// Actual password is stored securely in Expo SecureStore.
+// Password values are stored in SecureStore.
 // Only website and username are stored in SQLite.
 
 export async function addPassword(
@@ -319,28 +366,23 @@ export async function addPassword(
   try {
     await SecureStore.setItemAsync(`lifevault_password_${id}`, password);
   } catch (error) {
-    // Remove the database record if secure storage fails.
     db.runSync("DELETE FROM password_entries WHERE id = ?", id);
-
     throw error;
   }
 
   return result;
 }
 
-// GET ALL PASSWORD ENTRIES
 export function getPasswords(): PasswordEntry[] {
   return db.getAllSync<PasswordEntry>(
     "SELECT * FROM password_entries ORDER BY createdAt DESC",
   );
 }
 
-// GET ONE PASSWORD
 export async function getPassword(id: number): Promise<string | null> {
   return SecureStore.getItemAsync(`lifevault_password_${id}`);
 }
 
-// UPDATE PASSWORD ENTRY
 export async function updatePassword(
   id: number,
   website: string,
@@ -359,7 +401,6 @@ export async function updatePassword(
   await SecureStore.setItemAsync(`lifevault_password_${id}`, password);
 }
 
-// DELETE PASSWORD ENTRY
 export async function deletePassword(id: number) {
   await SecureStore.deleteItemAsync(`lifevault_password_${id}`);
 
@@ -370,7 +411,6 @@ export async function deletePassword(id: number) {
 // MEDICINE FUNCTIONS
 // ==================================================
 
-// ADD MEDICINE
 export function addMedicine(
   name: string,
   dosage: string,
@@ -403,14 +443,12 @@ export function addMedicine(
   );
 }
 
-// GET ALL MEDICINES
 export function getMedicines(): Medicine[] {
   return db.getAllSync<Medicine>(
     "SELECT * FROM medicines ORDER BY createdAt DESC",
   );
 }
 
-// UPDATE MEDICINE
 export function updateMedicine(
   id: number,
   name: string,
@@ -442,7 +480,6 @@ export function updateMedicine(
   );
 }
 
-// ACTIVATE / DEACTIVATE MEDICINE
 export function toggleMedicineStatus(id: number, isActive: number) {
   return db.runSync(
     "UPDATE medicines SET isActive = ? WHERE id = ?",
@@ -451,7 +488,6 @@ export function toggleMedicineStatus(id: number, isActive: number) {
   );
 }
 
-// UPDATE MEDICINE NOTIFICATION ID
 export function updateMedicineNotificationId(
   id: number,
   notificationId: string | null,
@@ -463,7 +499,144 @@ export function updateMedicineNotificationId(
   );
 }
 
-// DELETE MEDICINE
 export function deleteMedicine(id: number) {
   return db.runSync("DELETE FROM medicines WHERE id = ?", id);
+}
+
+// ==================================================
+// IMPORTANT DATES FUNCTIONS
+// ==================================================
+
+export function addImportantDate(
+  title: string,
+  description: string,
+  category: string,
+  eventDate: string,
+  notificationDaysBefore: number,
+) {
+  return db.runSync(
+    `INSERT INTO important_dates
+     (title, description, category, eventDate, notificationDaysBefore)
+     VALUES (?, ?, ?, ?, ?)`,
+    title,
+    description,
+    category,
+    eventDate,
+    notificationDaysBefore,
+  );
+}
+
+export function getImportantDates(): ImportantDate[] {
+  return db.getAllSync<ImportantDate>(
+    "SELECT * FROM important_dates ORDER BY eventDate ASC",
+  );
+}
+
+export function updateImportantDate(
+  id: number,
+  title: string,
+  description: string,
+  category: string,
+  eventDate: string,
+  notificationDaysBefore: number,
+) {
+  return db.runSync(
+    `UPDATE important_dates
+     SET title = ?,
+         description = ?,
+         category = ?,
+         eventDate = ?,
+         notificationDaysBefore = ?
+     WHERE id = ?`,
+    title,
+    description,
+    category,
+    eventDate,
+    notificationDaysBefore,
+    id,
+  );
+}
+
+export function updateImportantDateNotificationId(
+  id: number,
+  notificationId: string | null,
+) {
+  return db.runSync(
+    "UPDATE important_dates SET notificationId = ? WHERE id = ?",
+    notificationId,
+    id,
+  );
+}
+
+export function deleteImportantDate(id: number) {
+  return db.runSync("DELETE FROM important_dates WHERE id = ?", id);
+}
+
+// ==================================================
+// ASSIGNMENT MANAGER FUNCTIONS
+// ==================================================
+
+export function addAssignment(
+  title: string,
+  subject: string,
+  description: string,
+  dueDate: string,
+  priority: "Low" | "Medium" | "High",
+) {
+  return db.runSync(
+    `INSERT INTO assignments
+     (title, subject, description, dueDate, priority)
+     VALUES (?, ?, ?, ?, ?)`,
+    title,
+    subject,
+    description,
+    dueDate,
+    priority,
+  );
+}
+
+export function getAssignments(): Assignment[] {
+  return db.getAllSync<Assignment>(
+    `SELECT * FROM assignments
+     ORDER BY dueDate ASC, id DESC`,
+  );
+}
+
+export function updateAssignment(
+  id: number,
+  title: string,
+  subject: string,
+  description: string,
+  dueDate: string,
+  priority: "Low" | "Medium" | "High",
+) {
+  return db.runSync(
+    `UPDATE assignments
+     SET title = ?,
+         subject = ?,
+         description = ?,
+         dueDate = ?,
+         priority = ?
+     WHERE id = ?`,
+    title,
+    subject,
+    description,
+    dueDate,
+    priority,
+    id,
+  );
+}
+
+export function toggleAssignmentCompleted(id: number, isCompleted: number) {
+  return db.runSync(
+    `UPDATE assignments
+     SET isCompleted = ?
+     WHERE id = ?`,
+    isCompleted,
+    id,
+  );
+}
+
+export function deleteAssignment(id: number) {
+  return db.runSync("DELETE FROM assignments WHERE id = ?", id);
 }
