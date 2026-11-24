@@ -24,6 +24,11 @@ import {
   PasswordEntry,
   updatePassword,
 } from "../database/database";
+import {
+  createPasswordVaultPin,
+  hasPasswordVaultPin,
+  verifyPasswordVaultPin,
+} from "../utils/passwordVaultPin";
 
 export default function PasswordScreen() {
   // -------------------- SCREEN CAPTURE PROTECTION --------------------
@@ -83,11 +88,50 @@ export default function PasswordScreen() {
     "Verify your identity to access your saved passwords.",
   );
 
+  const [pinConfigured, setPinConfigured] = useState(false);
+  const [pinStatusLoading, setPinStatusLoading] = useState(true);
+  const [pinStatusError, setPinStatusError] = useState(false);
+  const [pinInput, setPinInput] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
+  const [pinBusy, setPinBusy] = useState(false);
+  const [pinMessage, setPinMessage] = useState("");
+
   // Prevent multiple fingerprint prompts.
   const isAuthenticating = useRef(false);
 
   // Track whether the app is currently active.
   const appIsActive = useRef(AppState.currentState === "active");
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function checkPinConfiguration() {
+      try {
+        const configured = await hasPasswordVaultPin();
+
+        if (isMounted) {
+          setPinConfigured(configured);
+        }
+      } catch (error) {
+        console.error("Password Vault PIN check failed:", error);
+
+        if (isMounted) {
+          setPinStatusError(true);
+          setPinMessage("Unable to check PIN settings. Try biometric unlock.");
+        }
+      } finally {
+        if (isMounted) {
+          setPinStatusLoading(false);
+        }
+      }
+    }
+
+    void checkPinConfiguration();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // -------------------- PASSWORD STATES --------------------
 
@@ -153,6 +197,8 @@ export default function PasswordScreen() {
     // Clear temporarily displayed passwords.
     setVisiblePasswords({});
     setShowPassword({});
+    setPinInput("");
+    setConfirmPin("");
 
     // Clear unfinished password form.
     clearForm();
@@ -161,6 +207,50 @@ export default function PasswordScreen() {
     setSearchText("");
 
     console.log("Password Vault locked automatically.");
+  }
+
+  async function handlePinUnlock() {
+    if (pinBusy || pinStatusLoading || pinStatusError) {
+      return;
+    }
+
+    if (!/^\d{4}$|^\d{6}$/.test(pinInput)) {
+      setPinMessage("Enter a 4- or 6-digit PIN.");
+      return;
+    }
+
+    if (!pinConfigured && pinInput !== confirmPin) {
+      setPinMessage("The PIN entries do not match.");
+      return;
+    }
+
+    try {
+      setPinBusy(true);
+      setPinMessage("");
+
+      if (pinConfigured) {
+        const isValid = await verifyPasswordVaultPin(pinInput);
+        if (!isValid) {
+          setPinInput("");
+          setPinMessage("Incorrect PIN. Please try again.");
+          return;
+        }
+      } else {
+        await createPasswordVaultPin(pinInput);
+        setPinConfigured(true);
+      }
+
+      setPinInput("");
+      setConfirmPin("");
+      setIsAuthenticated(true);
+      setAuthMessage("Authentication successful.");
+      loadPasswords();
+    } catch (error) {
+      console.error("Password Vault PIN error:", error);
+      setPinMessage("Unable to verify or save your PIN. Please try again.");
+    } finally {
+      setPinBusy(false);
+    }
   }
 
   // -------------------- FINGERPRINT AUTHENTICATION --------------------
@@ -476,7 +566,8 @@ export default function PasswordScreen() {
         <Text style={styles.lockTitle}>Password Vault Locked</Text>
 
         <Text style={styles.lockSubtitle}>
-          Your saved passwords are protected by biometric authentication.
+          Your saved passwords are protected by biometrics or your Password
+          Vault PIN.
         </Text>
 
         <Text style={styles.authMessage}>
@@ -492,6 +583,79 @@ export default function PasswordScreen() {
             {authLoading ? "Please wait..." : "🔓 Unlock with Fingerprint"}
           </Text>
         </TouchableOpacity>
+
+        <View style={styles.pinSection}>
+          <Text style={styles.pinSectionTitle}>
+            {pinConfigured ? "Unlock with PIN" : "Set up a Password Vault PIN"}
+          </Text>
+          {pinStatusLoading ? (
+            <Text style={styles.pinHint}>Checking PIN settings...</Text>
+          ) : pinStatusError ? (
+            <Text style={styles.pinMessage}>{pinMessage}</Text>
+          ) : (
+            <>
+              <TextInput
+                style={styles.pinInput}
+                value={pinInput}
+                onChangeText={(value) =>
+                  setPinInput(value.replace(/\D/g, "").slice(0, 6))
+                }
+                placeholder={
+                  pinConfigured
+                    ? "Enter your PIN"
+                    : "Create a 4- or 6-digit PIN"
+                }
+                keyboardType="number-pad"
+                secureTextEntry
+                maxLength={6}
+                accessibilityLabel={
+                  pinConfigured
+                    ? "Password Vault PIN"
+                    : "Create Password Vault PIN"
+                }
+              />
+              {!pinConfigured && (
+                <TextInput
+                  style={styles.pinInput}
+                  value={confirmPin}
+                  onChangeText={(value) =>
+                    setConfirmPin(value.replace(/\D/g, "").slice(0, 6))
+                  }
+                  placeholder="Confirm your PIN"
+                  keyboardType="number-pad"
+                  secureTextEntry
+                  maxLength={6}
+                  accessibilityLabel="Confirm Password Vault PIN"
+                />
+              )}
+              {pinMessage ? (
+                <Text style={styles.pinMessage}>{pinMessage}</Text>
+              ) : null}
+              <TouchableOpacity
+                style={[
+                  styles.pinButton,
+                  (authLoading || pinBusy) && styles.disabledButton,
+                ]}
+                onPress={handlePinUnlock}
+                disabled={authLoading || pinBusy}
+              >
+                <Text style={styles.pinButtonText}>
+                  {pinBusy
+                    ? "Please wait..."
+                    : pinConfigured
+                      ? "🔓 Unlock with PIN"
+                      : "Set PIN and Unlock"}
+                </Text>
+              </TouchableOpacity>
+              {Platform.OS === "web" && (
+                <Text style={styles.pinHint}>
+                  Browser PIN only protects this screen; it does not encrypt
+                  saved passwords.
+                </Text>
+              )}
+            </>
+          )}
+        </View>
       </View>
     );
   }
@@ -711,6 +875,60 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 16,
     fontWeight: "bold",
+  },
+
+  pinSection: {
+    width: "100%",
+    marginTop: 24,
+  },
+
+  pinSectionTitle: {
+    color: "#333333",
+    fontSize: 16,
+    fontWeight: "bold",
+    marginBottom: 10,
+    textAlign: "center",
+  },
+
+  pinInput: {
+    borderWidth: 1,
+    borderColor: "#DDDDDD",
+    borderRadius: 10,
+    padding: 12,
+    fontSize: 16,
+    backgroundColor: "#FFFFFF",
+    marginBottom: 10,
+    textAlign: "center",
+  },
+
+  pinButton: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#6C63FF",
+    borderWidth: 1,
+    padding: 14,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+
+  pinButtonText: {
+    color: "#6C63FF",
+    fontSize: 16,
+    fontWeight: "bold",
+  },
+
+  pinHint: {
+    color: "#777777",
+    fontSize: 12,
+    lineHeight: 18,
+    marginBottom: 10,
+    textAlign: "center",
+  },
+
+  pinMessage: {
+    color: "#B42318",
+    fontSize: 13,
+    marginBottom: 10,
+    textAlign: "center",
   },
 
   scrollContent: {

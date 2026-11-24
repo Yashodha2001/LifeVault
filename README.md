@@ -9,7 +9,7 @@ LifeVault is a personal organizer built with Expo and React Native. It brings no
 - **Medicine manager** — keep medication details and schedules, with optional daily notifications.
 - **Important dates** — save special dates and choose how many days in advance to receive a local notification.
 - **Assignment manager** — organize assignments by subject, due date, and priority, and track completion.
-- **Password vault** — save and search credentials; access is protected by device biometric authentication when available.
+- **Password vault** — save and search credentials; unlock with biometrics when available or a separate 4- or 6-digit PIN.
 - **Document & media vault** — add images, videos, and documents; organize personal and professional files, search, favorite, rename, and preview supported media. The vault can be locked with a 4- or 6-digit PIN and uses fingerprint authentication when available.
 - **Home dashboard** — see note and reminder counts, completion totals, and upcoming reminders.
 - **Calendar screen** — currently a basic placeholder for future event and deadline planning.
@@ -55,11 +55,11 @@ assets/         App icons and images
 app.json        Expo app configuration
 ```
 
-LifeVault uses Expo Router for navigation, SQLite for on-device records, and Expo SecureStore for password values and the document-vault PIN data.
+LifeVault uses Expo Router for navigation, SQLite for on-device records, and Expo SecureStore for password values and vault PIN data on supported native platforms.
 
 ## Privacy and data
 
-LifeVault is designed for local use; this repository does not configure an account service or cloud synchronization. Notes, reminders, schedules, assignments, and vault metadata are stored in the app's local SQLite database. Password values and the document-vault PIN data use Expo SecureStore. Imported files are copied into the app's local document directory.
+LifeVault is designed for local use; this repository does not configure an account service or cloud synchronization. Notes, reminders, schedules, assignments, and vault metadata are stored in the app's local SQLite database. Password values and vault PIN data use Expo SecureStore on supported native platforms. In a browser, vault PIN verifiers are stored as salted hashes in local storage and only gate the screens; they do not encrypt data. Expo SecureStore and document file storage are not supported on web, so password secret and document file storage require a native platform. Imported files are copied into the app's local document directory.
 
 The document-vault PIN controls access to the vault, but imported files are **not encrypted by the app**. A PIN or biometric lock should not be treated as file encryption. Keep a separate backup of important information: removing the app or losing the device may make local data unavailable.
 

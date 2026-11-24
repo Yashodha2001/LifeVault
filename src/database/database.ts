@@ -5,7 +5,7 @@ import * as SQLite from "expo-sqlite";
 // DATABASE CONNECTION
 // ==================================================
 
-export const db = SQLite.openDatabaseSync("lifevault.db");
+let db: SQLite.SQLiteDatabase;
 
 // ==================================================
 // TYPES
@@ -78,11 +78,13 @@ export type Assignment = {
 // DATABASE INITIALIZATION
 // ==================================================
 
-export function initializeDatabase() {
+export async function initializeDatabase() {
   console.log("Starting database initialization...");
 
+  db = await SQLite.openDatabaseAsync("lifevault.db");
+
   // NOTES TABLE
-  db.execSync(`
+  await db.execAsync(`
     CREATE TABLE IF NOT EXISTS notes (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       title TEXT NOT NULL,
@@ -94,7 +96,7 @@ export function initializeDatabase() {
   `);
 
   // REMINDERS TABLE
-  db.execSync(`
+  await db.execAsync(`
     CREATE TABLE IF NOT EXISTS reminders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       title TEXT NOT NULL,
@@ -108,7 +110,7 @@ export function initializeDatabase() {
   `);
 
   // PASSWORD VAULT TABLE
-  db.execSync(`
+  await db.execAsync(`
     CREATE TABLE IF NOT EXISTS password_entries (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       website TEXT NOT NULL,
@@ -118,7 +120,7 @@ export function initializeDatabase() {
   `);
 
   // MEDICINES TABLE
-  db.execSync(`
+  await db.execAsync(`
     CREATE TABLE IF NOT EXISTS medicines (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -135,7 +137,7 @@ export function initializeDatabase() {
   `);
 
   // IMPORTANT DATES TABLE
-  db.execSync(`
+  await db.execAsync(`
     CREATE TABLE IF NOT EXISTS important_dates (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       title TEXT NOT NULL,
@@ -148,7 +150,7 @@ export function initializeDatabase() {
     );
   `);
   // ASSIGNMENTS TABLE
-  db.execSync(`
+  await db.execAsync(`
     CREATE TABLE IF NOT EXISTS assignments (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       title TEXT NOT NULL,
@@ -166,34 +168,34 @@ export function initializeDatabase() {
   // --------------------------------------------------
 
   // NOTES: Add isFavorite if missing
-  const noteColumns = db.getAllSync<{ name: string }>(
+  const noteColumns = await db.getAllAsync<{ name: string }>(
     "PRAGMA table_info(notes)",
   );
 
   if (!noteColumns.some((column) => column.name === "isFavorite")) {
-    db.execSync("ALTER TABLE notes ADD COLUMN isFavorite INTEGER DEFAULT 0");
+    await db.execAsync("ALTER TABLE notes ADD COLUMN isFavorite INTEGER DEFAULT 0");
   }
 
   // REMINDERS: Add notificationId if missing
-  const reminderColumns = db.getAllSync<{ name: string }>(
+  const reminderColumns = await db.getAllAsync<{ name: string }>(
     "PRAGMA table_info(reminders)",
   );
 
   if (!reminderColumns.some((column) => column.name === "notificationId")) {
-    db.execSync("ALTER TABLE reminders ADD COLUMN notificationId TEXT");
+    await db.execAsync("ALTER TABLE reminders ADD COLUMN notificationId TEXT");
   }
 
   // MEDICINES: Add notificationId if missing
-  const medicineColumns = db.getAllSync<{ name: string }>(
+  const medicineColumns = await db.getAllAsync<{ name: string }>(
     "PRAGMA table_info(medicines)",
   );
 
   if (!medicineColumns.some((column) => column.name === "notificationId")) {
-    db.execSync("ALTER TABLE medicines ADD COLUMN notificationId TEXT");
+    await db.execAsync("ALTER TABLE medicines ADD COLUMN notificationId TEXT");
   }
 
   // IMPORTANT DATES: Add notification columns if missing
-  const importantDateColumns = db.getAllSync<{ name: string }>(
+  const importantDateColumns = await db.getAllAsync<{ name: string }>(
     "PRAGMA table_info(important_dates)",
   );
 
@@ -202,7 +204,7 @@ export function initializeDatabase() {
       (column) => column.name === "notificationDaysBefore",
     )
   ) {
-    db.execSync(
+    await db.execAsync(
       "ALTER TABLE important_dates ADD COLUMN notificationDaysBefore INTEGER DEFAULT 0",
     );
   }
@@ -210,7 +212,7 @@ export function initializeDatabase() {
   if (
     !importantDateColumns.some((column) => column.name === "notificationId")
   ) {
-    db.execSync("ALTER TABLE important_dates ADD COLUMN notificationId TEXT");
+    await db.execAsync("ALTER TABLE important_dates ADD COLUMN notificationId TEXT");
   }
 
   console.log("LifeVault database initialized successfully!");

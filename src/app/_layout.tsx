@@ -8,18 +8,32 @@ export default function RootLayout() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    try {
-      console.log("Starting database initialization...");
+    let isMounted = true;
 
-      initializeDatabase();
+    async function setupDatabase() {
+      try {
+        console.log("Starting database initialization...");
 
-      console.log("Database initialization completed!");
+        await initializeDatabase();
 
-      setIsReady(true);
-    } catch (err) {
-      console.error("Database initialization failed:", err);
-      setError("Unable to initialize the database.");
+        console.log("Database initialization completed!");
+
+        if (isMounted) {
+          setIsReady(true);
+        }
+      } catch (err) {
+        console.error("Database initialization failed:", err);
+        if (isMounted) {
+          setError("Unable to initialize the database.");
+        }
+      }
     }
+
+    void setupDatabase();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   if (error) {

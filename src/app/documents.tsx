@@ -6,6 +6,7 @@ import {
     AppState,
     Image,
     Modal,
+    Platform,
     ScrollView,
     StyleSheet,
     Text,
@@ -166,6 +167,7 @@ export default function DocumentsScreen() {
   // --------------------------------------------------
 
   const [securityReady, setSecurityReady] = useState(false);
+  const [securityError, setSecurityError] = useState(false);
 
   const [pinConfigured, setPinConfigured] = useState(false);
 
@@ -249,10 +251,10 @@ export default function DocumentsScreen() {
       } catch (error) {
         console.log("Security initialization error:", error);
 
-        Alert.alert(
-          "Security Error",
-          "Unable to check Document Vault security.",
-        );
+        if (mounted) {
+          setSecurityError(true);
+          setSecurityMessage("Unable to check Document Vault security.");
+        }
       } finally {
         if (mounted) {
           setSecurityReady(true);
@@ -321,9 +323,9 @@ export default function DocumentsScreen() {
   // UNLOCK VAULT
   // ==================================================
 
-  const unlockVault = () => {
+  const unlockVault = async () => {
     try {
-      initializeDocumentsDatabase();
+      await initializeDocumentsDatabase();
 
       setIsAuthenticated(true);
 
@@ -346,22 +348,19 @@ export default function DocumentsScreen() {
 
   const handleCreatePin = async () => {
     if (!/^\d{4}$|^\d{6}$/.test(pinInput)) {
-      Alert.alert("Invalid PIN", "Enter a 4-digit or 6-digit PIN.");
+      setSecurityMessage("Enter a 4-digit or 6-digit PIN.");
 
       return;
     }
 
     if (!/^\d{4}$|^\d{6}$/.test(confirmPin)) {
-      Alert.alert(
-        "Invalid Confirmation",
-        "Confirm your PIN using 4 or 6 digits.",
-      );
+      setSecurityMessage("Confirm your PIN using 4 or 6 digits.");
 
       return;
     }
 
     if (pinInput !== confirmPin) {
-      Alert.alert("PIN Mismatch", "The PINs do not match.");
+      setSecurityMessage("The PINs do not match.");
 
       return;
     }
@@ -372,17 +371,11 @@ export default function DocumentsScreen() {
       await createDocumentVaultPin(pinInput);
 
       setPinConfigured(true);
-
-      Alert.alert(
-        "Success",
-        "Your Document Vault PIN was created successfully.",
-      );
-
-      unlockVault();
+      await unlockVault();
     } catch (error) {
       console.log("PIN creation error:", error);
 
-      Alert.alert("Error", "Unable to create your PIN.");
+      setSecurityMessage("Unable to create your PIN.");
     } finally {
       setAuthBusy(false);
     }
@@ -394,7 +387,7 @@ export default function DocumentsScreen() {
 
   const handlePinUnlock = async () => {
     if (!pinInput) {
-      Alert.alert("PIN Required", "Please enter your PIN.");
+      setSecurityMessage("Please enter your PIN.");
 
       return;
     }
@@ -405,19 +398,16 @@ export default function DocumentsScreen() {
       const valid = await verifyDocumentVaultPin(pinInput);
 
       if (valid) {
-        unlockVault();
+        await unlockVault();
       } else {
         setPinInput("");
 
-        Alert.alert(
-          "Incorrect PIN",
-          "The PIN you entered is incorrect. Please try again.",
-        );
+        setSecurityMessage("Incorrect PIN. Please try again.");
       }
     } catch (error) {
       console.log("PIN verification error:", error);
 
-      Alert.alert("Error", "Unable to verify your PIN.");
+      setSecurityMessage("Unable to verify your PIN.");
     } finally {
       setAuthBusy(false);
     }
@@ -771,6 +761,17 @@ export default function DocumentsScreen() {
     );
   }
 
+  if (securityError) {
+    return (
+      <View style={styles.securityScreen}>
+        <View style={styles.securityCard}>
+          <Text style={styles.securityTitle}>Unable to check vault security</Text>
+          <Text style={styles.securityMessage}>{securityMessage}</Text>
+        </View>
+      </View>
+    );
+  }
+
   if (!isAuthenticated) {
     return (
       <View style={styles.securityScreen}>
@@ -785,7 +786,9 @@ export default function DocumentsScreen() {
 
           <Text style={styles.securityText}>
             {pinConfigured
-              ? "Use your fingerprint or enter your PIN."
+              ? Platform.OS === "web"
+                ? "Enter your PIN to unlock."
+                : "Use your fingerprint or enter your PIN."
               : "Create a 4-digit or 6-digit PIN to protect your files."}
           </Text>
 
@@ -825,7 +828,7 @@ export default function DocumentsScreen() {
             </Text>
           </TouchableOpacity>
 
-          {pinConfigured && (
+          {pinConfigured && Platform.OS !== "web" && (
             <TouchableOpacity
               style={styles.secondaryButton}
               disabled={authBusy}
@@ -838,6 +841,13 @@ export default function DocumentsScreen() {
           )}
 
           <Text style={styles.securityMessage}>{securityMessage}</Text>
+
+          {Platform.OS === "web" && (
+            <Text style={styles.securityMessage}>
+              Browser PIN protects this screen only. Files are not encrypted,
+              and file storage is unavailable on web.
+            </Text>
+          )}
         </View>
       </View>
     );

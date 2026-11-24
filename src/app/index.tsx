@@ -109,7 +109,7 @@ export default function HomeScreen() {
       route: "/dates",
     },
     {
-      title: "Assignment Manager",
+      title: "Assignment ",
       description: "Organize assignments and deadlines",
       icon: "🎓",
       route: "/assignment",

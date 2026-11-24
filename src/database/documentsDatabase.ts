@@ -1,7 +1,7 @@
 import * as SQLite from "expo-sqlite";
 
 // Connect to the existing LifeVault database.
-const documentsDB = SQLite.openDatabaseSync("lifevault.db");
+let documentsDB: SQLite.SQLiteDatabase;
 
 // Document information type.
 export type VaultDocument = {
@@ -19,8 +19,10 @@ export type VaultDocument = {
 
 // Create the documents table.
 // This does not delete or modify existing tables.
-export const initializeDocumentsDatabase = (): void => {
-  documentsDB.execSync(`
+export const initializeDocumentsDatabase = async (): Promise<void> => {
+  documentsDB = await SQLite.openDatabaseAsync("lifevault.db");
+
+  await documentsDB.execAsync(`
     CREATE TABLE IF NOT EXISTS documents (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
